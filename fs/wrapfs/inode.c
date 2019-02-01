@@ -435,15 +435,16 @@ out_err:
 	return err;
 }
 
-static int wrapfs_getattr(struct vfsmount *mnt, struct dentry *dentry,
-			  struct kstat *stat)
+static int wrapfs_getattr(const struct path *path, struct kstat *stat, 
+                          u32 request_mask, unsigned int flags)
 {
 	int err;
+        struct dentry *dentry = path->dentry;
 	struct kstat lower_stat;
 	struct path lower_path;
 
 	wrapfs_get_lower_path(dentry, &lower_path);
-	err = vfs_getattr(&lower_path, &lower_stat);
+	err = vfs_getattr(&lower_path, &lower_stat, request_mask, flags);
 	if (err)
 		goto out;
 	fsstack_copy_attr_all(d_inode(dentry),

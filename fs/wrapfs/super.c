@@ -105,7 +105,7 @@ static struct inode *wrapfs_alloc_inode(struct super_block *sb)
 	/* memset everything up to the inode to 0 */
 	memset(i, 0, offsetof(struct wrapfs_inode_info, vfs_inode));
 
-	i->vfs_inode.i_version = 1;
+        atomic64_set(&i->vfs_inode.i_version, 1);
 	return &i->vfs_inode;
 }
 
@@ -161,7 +161,6 @@ const struct super_operations wrapfs_sops = {
 	.remount_fs	= wrapfs_remount_fs,
 	.evict_inode	= wrapfs_evict_inode,
 	.umount_begin	= wrapfs_umount_begin,
-	.show_options	= generic_show_options,
 	.alloc_inode	= wrapfs_alloc_inode,
 	.destroy_inode	= wrapfs_destroy_inode,
 	.drop_inode	= generic_delete_inode,
