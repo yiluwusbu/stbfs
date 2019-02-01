@@ -44,6 +44,8 @@ struct hns_mac_cb;
 #define DSAF_ROCE_CREDIT_CHN	8
 #define DSAF_ROCE_CHAN_MODE	3
 
+#define HNS_MAX_WAIT_CNT 10000
+
 enum dsaf_roce_port_mode {
 	DSAF_ROCE_6PORT_MODE,
 	DSAF_ROCE_4PORT_MODE,
@@ -68,7 +70,7 @@ enum dsaf_roce_qos_sl {
 };
 
 #define DSAF_STATS_READ(p, offset) (*((u64 *)((u8 *)(p) + (offset))))
-#define HNS_DSAF_IS_DEBUG(dev) (dev->dsaf_mode == DSAF_MODE_DISABLE_SP)
+#define HNS_DSAF_IS_DEBUG(dev) ((dev)->dsaf_mode == DSAF_MODE_DISABLE_SP)
 
 enum hal_dsaf_mode {
 	HRD_DSAF_NO_DSAF_MODE	= 0x0,
@@ -429,23 +431,12 @@ static inline struct hnae_vf_cb *hns_ae_get_vf_cb(
 
 int hns_dsaf_set_mac_uc_entry(struct dsaf_device *dsaf_dev,
 			      struct dsaf_drv_mac_single_dest_entry *mac_entry);
-int hns_dsaf_set_mac_mc_entry(struct dsaf_device *dsaf_dev,
-			      struct dsaf_drv_mac_multi_dest_entry *mac_entry);
 int hns_dsaf_add_mac_mc_port(struct dsaf_device *dsaf_dev,
 			     struct dsaf_drv_mac_single_dest_entry *mac_entry);
 int hns_dsaf_del_mac_entry(struct dsaf_device *dsaf_dev, u16 vlan_id,
 			   u8 in_port_num, u8 *addr);
 int hns_dsaf_del_mac_mc_port(struct dsaf_device *dsaf_dev,
 			     struct dsaf_drv_mac_single_dest_entry *mac_entry);
-int hns_dsaf_get_mac_uc_entry(struct dsaf_device *dsaf_dev,
-			      struct dsaf_drv_mac_single_dest_entry *mac_entry);
-int hns_dsaf_get_mac_mc_entry(struct dsaf_device *dsaf_dev,
-			      struct dsaf_drv_mac_multi_dest_entry *mac_entry);
-int hns_dsaf_get_mac_entry_by_index(
-	struct dsaf_device *dsaf_dev,
-	u16 entry_index,
-	struct dsaf_drv_mac_multi_dest_entry *mac_entry);
-
 void hns_dsaf_fix_mac_mode(struct hns_mac_cb *mac_cb);
 
 int hns_dsaf_ae_init(struct dsaf_device *dsaf_dev);
@@ -474,6 +465,6 @@ int hns_dsaf_rm_mac_addr(
 
 int hns_dsaf_clr_mac_mc_port(struct dsaf_device *dsaf_dev,
 			     u8 mac_id, u8 port_num);
-
+int hns_dsaf_wait_pkt_clean(struct dsaf_device *dsaf_dev, int port);
 
 #endif /* __HNS_DSAF_MAIN_H__ */

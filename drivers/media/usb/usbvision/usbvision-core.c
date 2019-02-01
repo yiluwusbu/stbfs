@@ -17,10 +17,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/kernel.h>
@@ -1276,7 +1272,6 @@ static void usbvision_isoc_irq(struct urb *urb)
 	int len;
 	struct usb_usbvision *usbvision = urb->context;
 	int i;
-	unsigned long start_time = jiffies;
 	struct usbvision_frame **f;
 
 	/* We don't want to do anything if we are about to be removed! */
@@ -1327,8 +1322,6 @@ static void usbvision_isoc_irq(struct urb *urb)
 		PDEBUG(DBG_IRQ, "received data, but no one needs it");
 		scratch_reset(usbvision);
 	}
-
-	usbvision->time_in_irq += jiffies - start_time;
 
 	for (i = 0; i < USBVISION_URB_FRAMES; i++) {
 		urb->iso_frame_desc[i].status = 0;
@@ -1417,8 +1410,6 @@ static void usbvision_ctrl_urb_complete(struct urb *urb)
 
 	PDEBUG(DBG_IRQ, "");
 	usbvision->ctrl_urb_busy = 0;
-	if (waitqueue_active(&usbvision->ctrl_urb_wq))
-		wake_up_interruptible(&usbvision->ctrl_urb_wq);
 }
 
 
@@ -1863,7 +1854,7 @@ int usbvision_stream_interrupt(struct usb_usbvision *usbvision)
 
 static int usbvision_set_compress_params(struct usb_usbvision *usbvision)
 {
-	static const char proc[] = "usbvision_set_compresion_params: ";
+	static const char proc[] = "usbvision_set_compression_params: ";
 	int rc;
 	unsigned char *value = usbvision->ctrl_urb_buffer;
 

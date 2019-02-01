@@ -6,6 +6,7 @@ config MAC80211
 	select CRYPTO_AES
 	select CRYPTO_CCM
 	select CRYPTO_GCM
+	select CRYPTO_CMAC
 	select CRC32
 	---help---
 	  This option enables the hardware independent IEEE 802.11
@@ -25,20 +26,6 @@ config MAC80211_RC_MINSTREL
 	default y
 	---help---
 	  This option enables the 'minstrel' TX rate control algorithm
-
-config MAC80211_RC_MINSTREL_HT
-	bool "Minstrel 802.11n support" if EXPERT
-	depends on MAC80211_RC_MINSTREL
-	default y
-	---help---
-	  This option enables the 'minstrel_ht' TX rate control algorithm
-
-config MAC80211_RC_MINSTREL_VHT
-	bool "Minstrel 802.11ac support" if EXPERT
-	depends on MAC80211_RC_MINSTREL_HT
-	default n
-	---help---
-	  This option enables VHT in the 'minstrel_ht' TX rate control algorithm
 
 choice
 	prompt "Default rate control algorithm"
@@ -61,8 +48,7 @@ endchoice
 
 config MAC80211_RC_DEFAULT
 	string
-	default "minstrel_ht" if MAC80211_RC_DEFAULT_MINSTREL && MAC80211_RC_MINSTREL_HT
-	default "minstrel" if MAC80211_RC_DEFAULT_MINSTREL
+	default "minstrel_ht" if MAC80211_RC_DEFAULT_MINSTREL
 	default ""
 
 endif

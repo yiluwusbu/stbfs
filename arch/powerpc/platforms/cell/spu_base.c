@@ -50,11 +50,11 @@ struct cbe_spu_info cbe_spu_info[MAX_NUMNODES];
 EXPORT_SYMBOL_GPL(cbe_spu_info);
 
 /*
- * The spufs fault-handling code needs to call force_sig_info to raise signals
+ * The spufs fault-handling code needs to call force_sig_fault to raise signals
  * on DMA errors. Export it here to avoid general kernel-wide access to this
  * function
  */
-EXPORT_SYMBOL_GPL(force_sig_info);
+EXPORT_SYMBOL_GPL(force_sig_fault);
 
 /*
  * Protects cbe_spu_info and spu->number.
@@ -197,7 +197,9 @@ static int __spu_trap_data_map(struct spu *spu, unsigned long ea, u64 dsisr)
 	    (REGION_ID(ea) != USER_REGION_ID)) {
 
 		spin_unlock(&spu->register_lock);
-		ret = hash_page(ea, _PAGE_PRESENT | _PAGE_READ, 0x300, dsisr);
+		ret = hash_page(ea,
+				_PAGE_PRESENT | _PAGE_READ | _PAGE_PRIVILEGED,
+				0x300, dsisr);
 		spin_lock(&spu->register_lock);
 
 		if (!ret) {

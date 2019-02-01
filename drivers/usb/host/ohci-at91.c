@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-1.0+
 /*
  * OHCI HCD (Host Controller Driver) for USB.
  *
@@ -211,7 +212,7 @@ static int usb_hcd_at91_probe(const struct hc_driver *driver,
 
 	ohci_at91->sfr_regmap = at91_dt_syscon_sfr();
 	if (!ohci_at91->sfr_regmap)
-		dev_warn(dev, "failed to find sfr node\n");
+		dev_dbg(dev, "failed to find sfr node\n");
 
 	board = hcd->self.controller->platform_data;
 	ohci = hcd_to_ohci(hcd);
@@ -350,7 +351,7 @@ static int ohci_at91_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 
 		case USB_PORT_FEAT_SUSPEND:
 			dev_dbg(hcd->self.controller, "SetPortFeat: SUSPEND\n");
-			if (valid_port(wIndex)) {
+			if (valid_port(wIndex) && ohci_at91->sfr_regmap) {
 				ohci_at91_port_suspend(ohci_at91->sfr_regmap,
 						       1);
 				return 0;
@@ -393,7 +394,7 @@ static int ohci_at91_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 
 		case USB_PORT_FEAT_SUSPEND:
 			dev_dbg(hcd->self.controller, "ClearPortFeature: SUSPEND\n");
-			if (valid_port(wIndex)) {
+			if (valid_port(wIndex) && ohci_at91->sfr_regmap) {
 				ohci_at91_port_suspend(ohci_at91->sfr_regmap,
 						       0);
 				return 0;
@@ -550,6 +551,8 @@ static int ohci_hcd_at91_drv_probe(struct platform_device *pdev)
 		pdata->overcurrent_pin[i] =
 			devm_gpiod_get_index_optional(&pdev->dev, "atmel,oc",
 						      i, GPIOD_IN);
+		if (!pdata->overcurrent_pin[i])
+			continue;
 		if (IS_ERR(pdata->overcurrent_pin[i])) {
 			err = PTR_ERR(pdata->overcurrent_pin[i]);
 			dev_err(&pdev->dev, "unable to claim gpio \"overcurrent\": %d\n", err);

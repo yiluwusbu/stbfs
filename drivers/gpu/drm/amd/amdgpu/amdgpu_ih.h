@@ -25,6 +25,7 @@
 #define __AMDGPU_IH_H__
 
 struct amdgpu_device;
+struct amdgpu_iv_entry;
 
 /*
  * R6xx+ IH ring
@@ -46,18 +47,26 @@ struct amdgpu_ih_ring {
 	dma_addr_t		rb_dma_addr; /* only used when use_bus_addr = true */
 };
 
-struct amdgpu_iv_entry {
-	unsigned src_id;
-	unsigned src_data;
-	unsigned ring_id;
-	unsigned vm_id;
-	unsigned pas_id;
-	const uint32_t *iv_entry;
+/* provided by the ih block */
+struct amdgpu_ih_funcs {
+	/* ring read/write ptr handling, called from interrupt context */
+	u32 (*get_wptr)(struct amdgpu_device *adev);
+	bool (*prescreen_iv)(struct amdgpu_device *adev);
+	void (*decode_iv)(struct amdgpu_device *adev,
+			  struct amdgpu_iv_entry *entry);
+	void (*set_rptr)(struct amdgpu_device *adev);
 };
 
-int amdgpu_ih_ring_init(struct amdgpu_device *adev, unsigned ring_size,
-			bool use_bus_addr);
-void amdgpu_ih_ring_fini(struct amdgpu_device *adev);
-int amdgpu_ih_process(struct amdgpu_device *adev);
+#define amdgpu_ih_get_wptr(adev) (adev)->irq.ih_funcs->get_wptr((adev))
+#define amdgpu_ih_prescreen_iv(adev) (adev)->irq.ih_funcs->prescreen_iv((adev))
+#define amdgpu_ih_decode_iv(adev, iv) (adev)->irq.ih_funcs->decode_iv((adev), (iv))
+#define amdgpu_ih_set_rptr(adev) (adev)->irq.ih_funcs->set_rptr((adev))
+
+int amdgpu_ih_ring_init(struct amdgpu_device *adev, struct amdgpu_ih_ring *ih,
+			unsigned ring_size, bool use_bus_addr);
+void amdgpu_ih_ring_fini(struct amdgpu_device *adev, struct amdgpu_ih_ring *ih);
+int amdgpu_ih_process(struct amdgpu_device *adev, struct amdgpu_ih_ring *ih,
+		      void (*callback)(struct amdgpu_device *adev,
+				       struct amdgpu_ih_ring *ih));
 
 #endif

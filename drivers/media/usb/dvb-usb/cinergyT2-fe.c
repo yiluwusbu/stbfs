@@ -21,16 +21,12 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
- *
  */
 
 #include "cinergyT2.h"
 
 
-/**
+/*
  *  convert linux-dvb frontend parameter set into TPS.
  *  See ETSI ETS-300744, section 4.6.2, table 9 for details.
  *
@@ -299,9 +295,9 @@ static const struct dvb_frontend_ops cinergyt2_fe_ops = {
 	.delsys = { SYS_DVBT },
 	.info = {
 		.name			= DRIVER_NAME,
-		.frequency_min		= 174000000,
-		.frequency_max		= 862000000,
-		.frequency_stepsize	= 166667,
+		.frequency_min_hz	= 174 * MHz,
+		.frequency_max_hz	= 862 * MHz,
+		.frequency_stepsize_hz	= 166667,
 		.caps = FE_CAN_INVERSION_AUTO | FE_CAN_FEC_1_2
 			| FE_CAN_FEC_2_3 | FE_CAN_FEC_3_4
 			| FE_CAN_FEC_5_6 | FE_CAN_FEC_7_8

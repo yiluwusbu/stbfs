@@ -67,6 +67,7 @@ enum smk_inos {
 /*
  * List locks
  */
+static DEFINE_MUTEX(smack_master_list_lock);
 static DEFINE_MUTEX(smack_cipso_lock);
 static DEFINE_MUTEX(smack_ambient_lock);
 static DEFINE_MUTEX(smk_net4addr_lock);
@@ -262,12 +263,16 @@ static int smk_set_access(struct smack_parsed_rule *srp,
 		 * it needs to get added for reporting.
 		 */
 		if (global) {
+			mutex_unlock(rule_lock);
 			smlp = kzalloc(sizeof(*smlp), GFP_KERNEL);
 			if (smlp != NULL) {
 				smlp->smk_rule = sp;
+				mutex_lock(&smack_master_list_lock);
 				list_add_rcu(&smlp->list, &smack_rule_list);
+				mutex_unlock(&smack_master_list_lock);
 			} else
 				rc = -ENOMEM;
+			return rc;
 		}
 	}
 
@@ -2848,9 +2853,8 @@ static const struct file_operations smk_ptrace_ops = {
 static int smk_fill_super(struct super_block *sb, void *data, int silent)
 {
 	int rc;
-	struct inode *root_inode;
 
-	static struct tree_descr smack_files[] = {
+	static const struct tree_descr smack_files[] = {
 		[SMK_LOAD] = {
 			"load", &smk_load_ops, S_IRUGO|S_IWUSR},
 		[SMK_CIPSO] = {
@@ -2911,8 +2915,6 @@ static int smk_fill_super(struct super_block *sb, void *data, int silent)
 			__func__, rc);
 		return rc;
 	}
-
-	root_inode = d_inode(sb->s_root);
 
 	return 0;
 }

@@ -140,10 +140,14 @@
 	pinctrl-0 = <&davinci_mdio_default>;
 	pinctrl-1 = <&davinci_mdio_sleep>;
 	status = "okay";
+
+	ethphy0: ethernet-phy@0 {
+		reg = <0>;
+	};
 };
 
 &cpsw_emac0 {
-	phy_id = <&davinci_mdio>, <0>;
+	phy-handle = <&ethphy0>;
 	phy-mode = "rmii";
 };
 
@@ -184,4 +188,17 @@
 	bus-width = <0x4>;
 	cd-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
 	status = "okay";
+};
+
+&tps {
+	interrupt-parent = <&intc>;
+	interrupts = <7>; /* NNMI */
+
+	charger {
+		status = "okay";
+	};
+
+	pwrbutton {
+		status = "okay";
+	};
 };

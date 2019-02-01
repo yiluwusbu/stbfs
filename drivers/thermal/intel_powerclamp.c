@@ -28,7 +28,7 @@
  *              case of external interrupts without need for ack, clamping down
  *              cpu in non-irq context does not reduce irq. for majority of the
  *              cases, clamping down cpu does help reduce irq as well, we should
- *              be able to differenciate the two cases and give a quantitative
+ *              be able to differentiate the two cases and give a quantitative
  *              solution for the irqs that we can control. perhaps based on
  *              get_cpu_iowait_time_us()
  *
@@ -50,6 +50,7 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/sched/rt.h>
+#include <uapi/linux/sched/types.h>
 
 #include <asm/nmi.h>
 #include <asm/msr.h>
@@ -461,16 +462,13 @@ static void poll_pkg_cstate(struct work_struct *dummy)
 {
 	static u64 msr_last;
 	static u64 tsc_last;
-	static unsigned long jiffies_last;
 
 	u64 msr_now;
-	unsigned long jiffies_now;
 	u64 tsc_now;
 	u64 val64;
 
 	msr_now = pkg_state_counter();
 	tsc_now = rdtsc();
-	jiffies_now = jiffies;
 
 	/* calculate pkg cstate vs tsc ratio */
 	if (!msr_last || !tsc_last)
@@ -485,7 +483,6 @@ static void poll_pkg_cstate(struct work_struct *dummy)
 
 	/* update record */
 	msr_last = msr_now;
-	jiffies_last = jiffies_now;
 	tsc_last = tsc_now;
 
 	if (true == clamping)
@@ -678,13 +675,13 @@ static int __init powerclamp_probe(void)
 {
 
 	if (!x86_match_cpu(intel_powerclamp_ids)) {
-		pr_err("CPU does not support MWAIT");
+		pr_err("CPU does not support MWAIT\n");
 		return -ENODEV;
 	}
 
 	/* The goal for idle time alignment is to achieve package cstate. */
 	if (!has_pkg_state_counter()) {
-		pr_info("No package C-state available");
+		pr_info("No package C-state available\n");
 		return -ENODEV;
 	}
 

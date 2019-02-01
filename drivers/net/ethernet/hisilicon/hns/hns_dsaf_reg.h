@@ -176,7 +176,7 @@
 #define DSAF_INODE_IN_DATA_STP_DISC_0_REG	0x1A50
 #define DSAF_INODE_GE_FC_EN_0_REG		0x1B00
 #define DSAF_INODE_VC0_IN_PKT_NUM_0_REG		0x1B50
-#define DSAF_INODE_VC1_IN_PKT_NUM_0_REG		0x1C00
+#define DSAF_INODE_VC1_IN_PKT_NUM_0_REG		0x103C
 #define DSAF_INODE_IN_PRIO_PAUSE_BASE_REG	0x1C00
 #define DSAF_INODE_IN_PRIO_PAUSE_BASE_OFFSET	0x100
 #define DSAF_INODE_IN_PRIO_PAUSE_OFFSET		0x50
@@ -404,11 +404,11 @@
 #define RCB_ECC_ERR_ADDR4_REG			0x460
 #define RCB_ECC_ERR_ADDR5_REG			0x464
 
-#define RCB_COM_SF_CFG_INTMASK_RING		0x480
-#define RCB_COM_SF_CFG_RING_STS			0x484
-#define RCB_COM_SF_CFG_RING			0x488
-#define RCB_COM_SF_CFG_INTMASK_BD		0x48C
-#define RCB_COM_SF_CFG_BD_RINT_STS		0x470
+#define RCB_COM_SF_CFG_INTMASK_RING		0x470
+#define RCB_COM_SF_CFG_RING_STS			0x474
+#define RCB_COM_SF_CFG_RING			0x478
+#define RCB_COM_SF_CFG_INTMASK_BD		0x47C
+#define RCB_COM_SF_CFG_BD_RINT_STS		0x480
 #define RCB_COM_RCB_RD_BD_BUSY			0x490
 #define RCB_COM_RCB_FBD_CRT_EN			0x494
 #define RCB_COM_AXI_WR_ERR_INTMASK		0x498
@@ -421,7 +421,7 @@
 #define RCB_CFG_OVERTIME_REG			0x9300
 #define RCB_CFG_PKTLINE_INT_NUM_REG		0x9304
 #define RCB_CFG_OVERTIME_INT_NUM_REG		0x9308
-#define RCB_INT_GAP_TIME_REG			0x9400
+#define RCB_PORT_INT_GAPTIME_REG		0x9400
 #define RCB_PORT_CFG_OVERTIME_REG		0x9430
 
 #define RCB_RING_RX_RING_BASEADDR_L_REG		0x00000
@@ -464,8 +464,10 @@
 #define RCB_RING_INTMSK_TX_OVERTIME_REG		0x000C4
 #define RCB_RING_INTSTS_TX_OVERTIME_REG		0x000C8
 
+#define GMAC_FIFO_STATE_REG			0x0000UL
 #define GMAC_DUPLEX_TYPE_REG			0x0008UL
 #define GMAC_FD_FC_TYPE_REG			0x000CUL
+#define GMAC_TX_WATER_LINE_REG			0x0010UL
 #define GMAC_FC_TX_TIMER_REG			0x001CUL
 #define GMAC_FD_FC_ADDR_LOW_REG			0x0020UL
 #define GMAC_FD_FC_ADDR_HIGH_REG		0x0024UL
@@ -532,6 +534,7 @@
 #define GMAC_LD_LINK_COUNTER_REG		0x01D0UL
 #define GMAC_LOOP_REG				0x01DCUL
 #define GMAC_RECV_CONTROL_REG			0x01E0UL
+#define GMAC_PCS_RX_EN_REG			0x01E4UL
 #define GMAC_VLAN_CODE_REG			0x01E8UL
 #define GMAC_RX_OVERRUN_CNT_REG			0x01ECUL
 #define GMAC_RX_LENGTHFIELD_ERR_CNT_REG		0x01F4UL
@@ -912,6 +915,9 @@
 
 #define GMAC_DUPLEX_TYPE_B 0
 
+#define GMAC_TX_WATER_LINE_MASK		((1UL << 8) - 1)
+#define GMAC_TX_WATER_LINE_SHIFT	0
+
 #define GMAC_FC_TX_TIMER_S 0
 #define GMAC_FC_TX_TIMER_M 0xffff
 
@@ -1030,12 +1036,9 @@ static inline void dsaf_write_syscon(struct regmap *base, u32 reg, u32 value)
 	regmap_write(base, reg, value);
 }
 
-static inline u32 dsaf_read_syscon(struct regmap *base, u32 reg)
+static inline int dsaf_read_syscon(struct regmap *base, u32 reg, u32 *val)
 {
-	unsigned int val;
-
-	regmap_read(base, reg, &val);
-	return val;
+	return regmap_read(base, reg, val);
 }
 
 #define dsaf_read_dev(a, reg) \

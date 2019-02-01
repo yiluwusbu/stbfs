@@ -15,11 +15,6 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
- *  02111-1307  USA
  */
 
 #include <linux/init.h>
@@ -37,7 +32,6 @@
 #include "cx18-driver.h"
 #include "cx18-version.h"
 #include "cx18-alsa.h"
-#include "cx18-alsa-mixer.h"
 #include "cx18-alsa-pcm.h"
 
 int cx18_alsa_debug;
@@ -118,7 +112,7 @@ static int snd_cx18_card_set_names(struct snd_cx18_card *cxsc)
 	struct snd_card *sc = cxsc->sc;
 
 	/* sc->driver is used by alsa-lib's configurator: simple, unique */
-	strlcpy(sc->driver, "CX23418", sizeof(sc->driver));
+	strscpy(sc->driver, "CX23418", sizeof(sc->driver));
 
 	/* sc->shortname is a symlink in /proc/asound: CX18-M -> cardN */
 	snprintf(sc->shortname,  sizeof(sc->shortname), "CX18-%d",

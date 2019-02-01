@@ -63,7 +63,6 @@
 #include <linux/jiffies.h>
 #include <linux/mii.h>
 #include <linux/module.h>
-#include <linux/moduleparam.h>
 #include <linux/net.h>
 #include <linux/netdevice.h>
 #include <linux/pci.h>
@@ -1886,7 +1885,7 @@ static u16 atl1_alloc_rx_buffers(struct atl1_adapter *adapter)
 		buffer_info->skb = skb;
 		buffer_info->length = (u16) adapter->rx_buffer_len;
 		page = virt_to_page(skb->data);
-		offset = (unsigned long)skb->data & ~PAGE_MASK;
+		offset = offset_in_page(skb->data);
 		buffer_info->dma = pci_map_page(pdev, page, offset,
 						adapter->rx_buffer_len,
 						PCI_DMA_FROMDEVICE);
@@ -2230,7 +2229,7 @@ static void atl1_tx_map(struct atl1_adapter *adapter, struct sk_buff *skb,
 		hdr_len = skb_transport_offset(skb) + tcp_hdrlen(skb);
 		buffer_info->length = hdr_len;
 		page = virt_to_page(skb->data);
-		offset = (unsigned long)skb->data & ~PAGE_MASK;
+		offset = offset_in_page(skb->data);
 		buffer_info->dma = pci_map_page(adapter->pdev, page,
 						offset, hdr_len,
 						PCI_DMA_TODEVICE);
@@ -2254,9 +2253,8 @@ static void atl1_tx_map(struct atl1_adapter *adapter, struct sk_buff *skb,
 				data_len -= buffer_info->length;
 				page = virt_to_page(skb->data +
 					(hdr_len + i * ATL1_MAX_TX_BUF_LEN));
-				offset = (unsigned long)(skb->data +
-					(hdr_len + i * ATL1_MAX_TX_BUF_LEN)) &
-					~PAGE_MASK;
+				offset = offset_in_page(skb->data +
+					(hdr_len + i * ATL1_MAX_TX_BUF_LEN));
 				buffer_info->dma = pci_map_page(adapter->pdev,
 					page, offset, buffer_info->length,
 					PCI_DMA_TODEVICE);
@@ -2268,7 +2266,7 @@ static void atl1_tx_map(struct atl1_adapter *adapter, struct sk_buff *skb,
 		/* not TSO */
 		buffer_info->length = buf_len;
 		page = virt_to_page(skb->data);
-		offset = (unsigned long)skb->data & ~PAGE_MASK;
+		offset = offset_in_page(skb->data);
 		buffer_info->dma = pci_map_page(adapter->pdev, page,
 			offset, buf_len, PCI_DMA_TODEVICE);
 		if (++next_to_use == tpd_ring->count)
@@ -2457,7 +2455,7 @@ static int atl1_rings_clean(struct napi_struct *napi, int budget)
 	if (work_done >= budget)
 		return work_done;
 
-	napi_complete(napi);
+	napi_complete_done(napi, work_done);
 	/* re-enable Interrupt */
 	if (likely(adapter->int_enabled))
 		atlx_imr_set(adapter, IMR_NORMAL_MASK);
@@ -2576,9 +2574,10 @@ static irqreturn_t atl1_intr(int irq, void *data)
  * atl1_phy_config - Timer Call-back
  * @data: pointer to netdev cast into an unsigned long
  */
-static void atl1_phy_config(unsigned long data)
+static void atl1_phy_config(struct timer_list *t)
 {
-	struct atl1_adapter *adapter = (struct atl1_adapter *)data;
+	struct atl1_adapter *adapter = from_timer(adapter, t,
+						  phy_config_timer);
 	struct atl1_hw *hw = &adapter->hw;
 	unsigned long flags;
 
@@ -3072,8 +3071,7 @@ static int atl1_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* assume we have no link for now */
 	netif_carrier_off(netdev);
 
-	setup_timer(&adapter->phy_config_timer, atl1_phy_config,
-		    (unsigned long)adapter);
+	timer_setup(&adapter->phy_config_timer, atl1_phy_config, 0);
 	adapter->phy_timer_pending = false;
 
 	INIT_WORK(&adapter->reset_dev_task, atl1_reset_dev_task);
@@ -3279,7 +3277,6 @@ static int atl1_set_link_ksettings(struct net_device *netdev,
 	u16 phy_data;
 	int ret_val = 0;
 	u16 old_media_type = hw->media_type;
-	u32 advertising;
 
 	if (netif_running(adapter->netdev)) {
 		if (netif_msg_link(adapter))
@@ -3313,25 +3310,7 @@ static int atl1_set_link_ksettings(struct net_device *netdev,
 				hw->media_type = MEDIA_TYPE_10M_HALF;
 		}
 	}
-	switch (hw->media_type) {
-	case MEDIA_TYPE_AUTO_SENSOR:
-		advertising =
-		    ADVERTISED_10baseT_Half |
-		    ADVERTISED_10baseT_Full |
-		    ADVERTISED_100baseT_Half |
-		    ADVERTISED_100baseT_Full |
-		    ADVERTISED_1000baseT_Full |
-		    ADVERTISED_Autoneg | ADVERTISED_TP;
-		break;
-	case MEDIA_TYPE_1000M_FULL:
-		advertising =
-		    ADVERTISED_1000baseT_Full |
-		    ADVERTISED_Autoneg | ADVERTISED_TP;
-		break;
-	default:
-		advertising = 0;
-		break;
-	}
+
 	if (atl1_phy_setup_autoneg_adv(hw)) {
 		ret_val = -EINVAL;
 		if (netif_msg_link(adapter))

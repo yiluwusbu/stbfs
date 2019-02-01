@@ -10,10 +10,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/io.h>
@@ -43,8 +39,8 @@ struct timbradio {
 static int timbradio_vidioc_querycap(struct file *file, void  *priv,
 	struct v4l2_capability *v)
 {
-	strlcpy(v->driver, DRIVER_NAME, sizeof(v->driver));
-	strlcpy(v->card, "Timberdale Radio", sizeof(v->card));
+	strscpy(v->driver, DRIVER_NAME, sizeof(v->driver));
+	strscpy(v->card, "Timberdale Radio", sizeof(v->card));
 	snprintf(v->bus_info, sizeof(v->bus_info), "platform:"DRIVER_NAME);
 	v->device_caps = V4L2_CAP_TUNER | V4L2_CAP_RADIO;
 	v->capabilities = v->device_caps | V4L2_CAP_DEVICE_CAPS;
@@ -119,7 +115,7 @@ static int timbradio_probe(struct platform_device *pdev)
 	tr->pdata = *pdata;
 	mutex_init(&tr->lock);
 
-	strlcpy(tr->video_dev.name, "Timberdale Radio",
+	strscpy(tr->video_dev.name, "Timberdale Radio",
 		sizeof(tr->video_dev.name));
 	tr->video_dev.fops = &timbradio_fops;
 	tr->video_dev.ioctl_ops = &timbradio_ioctl_ops;
@@ -127,7 +123,7 @@ static int timbradio_probe(struct platform_device *pdev)
 	tr->video_dev.minor = -1;
 	tr->video_dev.lock = &tr->lock;
 
-	strlcpy(tr->v4l2_dev.name, DRIVER_NAME, sizeof(tr->v4l2_dev.name));
+	strscpy(tr->v4l2_dev.name, DRIVER_NAME, sizeof(tr->v4l2_dev.name));
 	err = v4l2_device_register(NULL, &tr->v4l2_dev);
 	if (err)
 		goto err;

@@ -79,7 +79,10 @@ const struct nla_policy tipc_nl_sock_policy[TIPC_NLA_SOCK_MAX + 1] = {
 
 const struct nla_policy tipc_nl_net_policy[TIPC_NLA_NET_MAX + 1] = {
 	[TIPC_NLA_NET_UNSPEC]		= { .type = NLA_UNSPEC },
-	[TIPC_NLA_NET_ID]		= { .type = NLA_U32 }
+	[TIPC_NLA_NET_ID]		= { .type = NLA_U32 },
+	[TIPC_NLA_NET_ADDR]		= { .type = NLA_U32 },
+	[TIPC_NLA_NET_NODEID]		= { .type = NLA_U64 },
+	[TIPC_NLA_NET_NODEID_W1]	= { .type = NLA_U64 },
 };
 
 const struct nla_policy tipc_nl_link_policy[TIPC_NLA_LINK_MAX + 1] = {
@@ -164,7 +167,9 @@ static const struct genl_ops tipc_genl_v2_ops[] = {
 	},
 	{
 		.cmd	= TIPC_NL_SOCK_GET,
+		.start = tipc_dump_start,
 		.dumpit	= tipc_nl_sk_dump,
+		.done	= tipc_dump_done,
 		.policy = tipc_nl_policy,
 	},
 	{
@@ -268,7 +273,8 @@ int tipc_nlmsg_parse(const struct nlmsghdr *nlh, struct nlattr ***attr)
 	if (!*attr)
 		return -EOPNOTSUPP;
 
-	return nlmsg_parse(nlh, GENL_HDRLEN, *attr, maxattr, tipc_nl_policy);
+	return nlmsg_parse(nlh, GENL_HDRLEN, *attr, maxattr, tipc_nl_policy,
+			   NULL);
 }
 
 int __init tipc_netlink_start(void)

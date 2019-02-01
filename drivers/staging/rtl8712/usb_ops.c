@@ -1,21 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  * usb_ops.c
  *
  * Copyright(c) 2007 - 2010 Realtek Corporation. All rights reserved.
  * Linux device driver for RTL8192SU
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
  *
  * Modifications for inclusion into the Linux staging tree are
  * Copyright(c) 2010 Larry Finger. All rights reserved.
@@ -41,7 +29,7 @@ static u8 usb_read8(struct intf_hdl *pintfhdl, u32 addr)
 	u16 wvalue;
 	u16 index;
 	u16 len;
-	u32 data;
+	__le32 data;
 	struct intf_priv *pintfpriv = pintfhdl->pintfpriv;
 
 	request = 0x05;
@@ -61,7 +49,7 @@ static u16 usb_read16(struct intf_hdl *pintfhdl, u32 addr)
 	u16 wvalue;
 	u16 index;
 	u16 len;
-	u32 data;
+	__le32 data;
 	struct intf_priv *pintfpriv = pintfhdl->pintfpriv;
 
 	request = 0x05;
@@ -81,7 +69,7 @@ static u32 usb_read32(struct intf_hdl *pintfhdl, u32 addr)
 	u16 wvalue;
 	u16 index;
 	u16 len;
-	u32 data;
+	__le32 data;
 	struct intf_priv *pintfpriv = pintfhdl->pintfpriv;
 
 	request = 0x05;
@@ -101,7 +89,7 @@ static void usb_write8(struct intf_hdl *pintfhdl, u32 addr, u8 val)
 	u16 wvalue;
 	u16 index;
 	u16 len;
-	u32 data;
+	__le32 data;
 	struct intf_priv *pintfpriv = pintfhdl->pintfpriv;
 
 	request = 0x05;
@@ -109,8 +97,7 @@ static void usb_write8(struct intf_hdl *pintfhdl, u32 addr, u8 val)
 	index = 0;
 	wvalue = (u16)(addr & 0x0000ffff);
 	len = 1;
-	data = val;
-	data = cpu_to_le32(data & 0x000000ff);
+	data = cpu_to_le32((u32)val & 0x000000ff);
 	r8712_usbctrl_vendorreq(pintfpriv, request, wvalue, index, &data, len,
 			  requesttype);
 }
@@ -122,7 +109,7 @@ static void usb_write16(struct intf_hdl *pintfhdl, u32 addr, u16 val)
 	u16 wvalue;
 	u16 index;
 	u16 len;
-	u32 data;
+	__le32 data;
 	struct intf_priv *pintfpriv = pintfhdl->pintfpriv;
 
 	request = 0x05;
@@ -130,8 +117,7 @@ static void usb_write16(struct intf_hdl *pintfhdl, u32 addr, u16 val)
 	index = 0;
 	wvalue = (u16)(addr & 0x0000ffff);
 	len = 2;
-	data = val;
-	data = cpu_to_le32(data & 0x0000ffff);
+	data = cpu_to_le32((u32)val & 0x0000ffff);
 	r8712_usbctrl_vendorreq(pintfpriv, request, wvalue, index, &data, len,
 			  requesttype);
 }
@@ -143,7 +129,7 @@ static void usb_write32(struct intf_hdl *pintfhdl, u32 addr, u32 val)
 	u16 wvalue;
 	u16 index;
 	u16 len;
-	u32 data;
+	__le32 data;
 	struct intf_priv *pintfpriv = pintfhdl->pintfpriv;
 
 	request = 0x05;

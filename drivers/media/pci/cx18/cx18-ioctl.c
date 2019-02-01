@@ -15,11 +15,6 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
- *  02111-1307  USA
  */
 
 #include "cx18-driver.h"
@@ -402,8 +397,8 @@ static int cx18_querycap(struct file *file, void *fh,
 	struct cx18_stream *s = video_drvdata(file);
 	struct cx18 *cx = id->cx;
 
-	strlcpy(vcap->driver, CX18_DRIVER_NAME, sizeof(vcap->driver));
-	strlcpy(vcap->card, cx->card_name, sizeof(vcap->card));
+	strscpy(vcap->driver, CX18_DRIVER_NAME, sizeof(vcap->driver));
+	strscpy(vcap->card, cx->card_name, sizeof(vcap->card));
 	snprintf(vcap->bus_info, sizeof(vcap->bus_info),
 		 "PCI:%s", pci_name(cx->pci_dev));
 	vcap->capabilities = cx->v4l2_cap;	/* capabilities */
@@ -637,9 +632,9 @@ static int cx18_g_tuner(struct file *file, void *fh, struct v4l2_tuner *vt)
 	cx18_call_all(cx, tuner, g_tuner, vt);
 
 	if (vt->type == V4L2_TUNER_RADIO)
-		strlcpy(vt->name, "cx18 Radio Tuner", sizeof(vt->name));
+		strscpy(vt->name, "cx18 Radio Tuner", sizeof(vt->name));
 	else
-		strlcpy(vt->name, "cx18 TV Tuner", sizeof(vt->name));
+		strscpy(vt->name, "cx18 TV Tuner", sizeof(vt->name));
 	return 0;
 }
 

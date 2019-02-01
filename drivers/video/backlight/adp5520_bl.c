@@ -332,10 +332,18 @@ static int adp5520_bl_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, bl);
-	ret |= adp5520_bl_setup(bl);
+	ret = adp5520_bl_setup(bl);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to setup\n");
+		if (data->pdata->en_ambl_sens)
+			sysfs_remove_group(&bl->dev.kobj,
+					&adp5520_bl_attr_group);
+		return ret;
+	}
+
 	backlight_update_status(bl);
 
-	return ret;
+	return 0;
 }
 
 static int adp5520_bl_remove(struct platform_device *pdev)
@@ -383,7 +391,7 @@ static struct platform_driver adp5520_bl_driver = {
 
 module_platform_driver(adp5520_bl_driver);
 
-MODULE_AUTHOR("Michael Hennerich <hennerich@blackfin.uclinux.org>");
+MODULE_AUTHOR("Michael Hennerich <michael.hennerich@analog.com>");
 MODULE_DESCRIPTION("ADP5520(01) Backlight Driver");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:adp5520-backlight");

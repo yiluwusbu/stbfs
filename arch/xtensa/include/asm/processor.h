@@ -11,7 +11,6 @@
 #define _XTENSA_PROCESSOR_H
 
 #include <variant/core.h>
-#include <platform/hardware.h>
 
 #include <linux/compiler.h>
 #include <asm/ptrace.h>
@@ -24,7 +23,11 @@
 # error Linux requires the Xtensa Windowed Registers Option.
 #endif
 
-#define ARCH_SLAB_MINALIGN	XCHAL_DATA_WIDTH
+/* Xtensa ABI requires stack alignment to be at least 16 */
+
+#define STACK_ALIGN (XCHAL_DATA_WIDTH > 16 ? XCHAL_DATA_WIDTH : 16)
+
+#define ARCH_SLAB_MINALIGN STACK_ALIGN
 
 /*
  * User space process size: 1 GB.
@@ -113,6 +116,21 @@
  */
 #define MAKE_PC_FROM_RA(ra,sp)    (((ra) & 0x3fffffff) | ((sp) & 0xc0000000))
 
+/* Spill slot location for the register reg in the spill area under the stack
+ * pointer sp. reg must be in the range [0..4).
+ */
+#define SPILL_SLOT(sp, reg) (*(((unsigned long *)(sp)) - 4 + (reg)))
+
+/* Spill slot location for the register reg in the spill area under the stack
+ * pointer sp for the call8. reg must be in the range [4..8).
+ */
+#define SPILL_SLOT_CALL8(sp, reg) (*(((unsigned long *)(sp)) - 12 + (reg)))
+
+/* Spill slot location for the register reg in the spill area under the stack
+ * pointer sp for the call12. reg must be in the range [4..12).
+ */
+#define SPILL_SLOT_CALL12(sp, reg) (*(((unsigned long *)(sp)) - 16 + (reg)))
+
 typedef struct {
 	unsigned long seg;
 } mm_segment_t;
@@ -137,14 +155,6 @@ struct thread_struct {
 	/* Make structure 16 bytes aligned. */
 	int align[0] __attribute__ ((aligned(16)));
 };
-
-
-/*
- * Default implementation of macro that returns current
- * instruction pointer ("program counter").
- */
-#define current_text_addr()  ({ __label__ _l; _l: &&_l;})
-
 
 /* This decides where the kernel will search for a free chunk of vm
  * space during mmap's.
@@ -192,13 +202,6 @@ struct mm_struct;
 
 /* Free all resources held by a thread. */
 #define release_thread(thread) do { } while(0)
-
-/* Copy and release all segment info associated with a VM */
-#define copy_segments(p, mm)	do { } while(0)
-#define release_segments(mm)	do { } while(0)
-#define forget_segments()	do { } while (0)
-
-#define thread_saved_pc(tsk)	(task_pt_regs(tsk)->pc)
 
 extern unsigned long get_wchan(struct task_struct *p);
 

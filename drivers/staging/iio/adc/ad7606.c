@@ -26,6 +26,14 @@
 
 #include "ad7606.h"
 
+/*
+ * Scales are computed as 5000/32768 and 10000/32768 respectively,
+ * so that when applied to the raw values they provide mV values
+ */
+static const unsigned int scale_avail[2][2] = {
+	{0, 152588}, {0, 305176}
+};
+
 static int ad7606_reset(struct ad7606_state *st)
 {
 	if (st->gpio_reset) {
@@ -151,9 +159,9 @@ static int ad7606_read_raw(struct iio_dev *indio_dev,
 		*val = (short)ret;
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
-		*val = st->range * 2;
-		*val2 = st->chip_info->channels[0].scan_type.realbits;
-		return IIO_VAL_FRACTIONAL_LOG2;
+		*val = scale_avail[st->range][0];
+		*val2 = scale_avail[st->range][1];
+		return IIO_VAL_INT_PLUS_MICRO;
 	case IIO_CHAN_INFO_OVERSAMPLING_RATIO:
 		*val = st->oversampling;
 		return IIO_VAL_INT;
@@ -161,42 +169,22 @@ static int ad7606_read_raw(struct iio_dev *indio_dev,
 	return -EINVAL;
 }
 
-static ssize_t ad7606_show_range(struct device *dev,
-				 struct device_attribute *attr, char *buf)
+static ssize_t in_voltage_scale_available_show(struct device *dev,
+					       struct device_attribute *attr,
+					       char *buf)
 {
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-	struct ad7606_state *st = iio_priv(indio_dev);
+	int i, len = 0;
 
-	return sprintf(buf, "%u\n", st->range);
+	for (i = 0; i < ARRAY_SIZE(scale_avail); i++)
+		len += scnprintf(buf + len, PAGE_SIZE - len, "%d.%06u ",
+				 scale_avail[i][0], scale_avail[i][1]);
+
+	buf[len - 1] = '\n';
+
+	return len;
 }
 
-static ssize_t ad7606_store_range(struct device *dev,
-				  struct device_attribute *attr,
-				  const char *buf, size_t count)
-{
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
-	struct ad7606_state *st = iio_priv(indio_dev);
-	unsigned long lval;
-	int ret;
-
-	ret = kstrtoul(buf, 10, &lval);
-	if (ret)
-		return ret;
-
-	if (!(lval == 5000 || lval == 10000))
-		return -EINVAL;
-
-	mutex_lock(&indio_dev->mlock);
-	gpiod_set_value(st->gpio_range, lval == 10000);
-	st->range = lval;
-	mutex_unlock(&indio_dev->mlock);
-
-	return count;
-}
-
-static IIO_DEVICE_ATTR(in_voltage_range, S_IRUGO | S_IWUSR,
-		       ad7606_show_range, ad7606_store_range, 0);
-static IIO_CONST_ATTR(in_voltage_range_available, "5000 10000");
+static IIO_DEVICE_ATTR_RO(in_voltage_scale_available, 0);
 
 static int ad7606_oversampling_get_index(unsigned int val)
 {
@@ -217,10 +205,24 @@ static int ad7606_write_raw(struct iio_dev *indio_dev,
 			    long mask)
 {
 	struct ad7606_state *st = iio_priv(indio_dev);
-	int values[3];
-	int ret;
+	DECLARE_BITMAP(values, 3);
+	int ret, i;
 
 	switch (mask) {
+	case IIO_CHAN_INFO_SCALE:
+		ret = -EINVAL;
+		mutex_lock(&st->lock);
+		for (i = 0; i < ARRAY_SIZE(scale_avail); i++)
+			if (val2 == scale_avail[i][1]) {
+				gpiod_set_value(st->gpio_range, i);
+				st->range = i;
+
+				ret = 0;
+				break;
+			}
+		mutex_unlock(&st->lock);
+
+		return ret;
 	case IIO_CHAN_INFO_OVERSAMPLING_RATIO:
 		if (val2)
 			return -EINVAL;
@@ -228,15 +230,13 @@ static int ad7606_write_raw(struct iio_dev *indio_dev,
 		if (ret < 0)
 			return ret;
 
-		values[0] = (ret >> 0) & 1;
-		values[1] = (ret >> 1) & 1;
-		values[2] = (ret >> 2) & 1;
+		values[0] = ret;
 
-		mutex_lock(&indio_dev->mlock);
-		gpiod_set_array_value(ARRAY_SIZE(values), st->gpio_os->desc,
+		mutex_lock(&st->lock);
+		gpiod_set_array_value(3, st->gpio_os->desc, st->gpio_os->info,
 				      values);
 		st->oversampling = val;
-		mutex_unlock(&indio_dev->mlock);
+		mutex_unlock(&st->lock);
 
 		return 0;
 	default:
@@ -247,8 +247,7 @@ static int ad7606_write_raw(struct iio_dev *indio_dev,
 static IIO_CONST_ATTR(oversampling_ratio_available, "1 2 4 8 16 32 64");
 
 static struct attribute *ad7606_attributes_os_and_range[] = {
-	&iio_dev_attr_in_voltage_range.dev_attr.attr,
-	&iio_const_attr_in_voltage_range_available.dev_attr.attr,
+	&iio_dev_attr_in_voltage_scale_available.dev_attr.attr,
 	&iio_const_attr_oversampling_ratio_available.dev_attr.attr,
 	NULL,
 };
@@ -267,8 +266,7 @@ static const struct attribute_group ad7606_attribute_group_os = {
 };
 
 static struct attribute *ad7606_attributes_range[] = {
-	&iio_dev_attr_in_voltage_range.dev_attr.attr,
-	&iio_const_attr_in_voltage_range_available.dev_attr.attr,
+	&iio_dev_attr_in_voltage_scale_available.dev_attr.attr,
 	NULL,
 };
 
@@ -276,7 +274,7 @@ static const struct attribute_group ad7606_attribute_group_range = {
 	.attrs = ad7606_attributes_range,
 };
 
-#define AD7606_CHANNEL(num)					\
+#define AD760X_CHANNEL(num, mask)				\
 	{							\
 		.type = IIO_VOLTAGE,				\
 		.indexed = 1,					\
@@ -284,8 +282,7 @@ static const struct attribute_group ad7606_attribute_group_range = {
 		.address = num,					\
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),	\
 		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE),\
-		.info_mask_shared_by_all =			\
-			BIT(IIO_CHAN_INFO_OVERSAMPLING_RATIO),	\
+		.info_mask_shared_by_all = mask,		\
 		.scan_index = num,				\
 		.scan_type = {					\
 			.sign = 's',				\
@@ -294,6 +291,20 @@ static const struct attribute_group ad7606_attribute_group_range = {
 			.endianness = IIO_CPU,			\
 		},						\
 	}
+
+#define AD7605_CHANNEL(num)	\
+	AD760X_CHANNEL(num, 0)
+
+#define AD7606_CHANNEL(num)	\
+	AD760X_CHANNEL(num, BIT(IIO_CHAN_INFO_OVERSAMPLING_RATIO))
+
+static const struct iio_chan_spec ad7605_channels[] = {
+	IIO_CHAN_SOFT_TIMESTAMP(4),
+	AD7605_CHANNEL(0),
+	AD7605_CHANNEL(1),
+	AD7605_CHANNEL(2),
+	AD7605_CHANNEL(3),
+};
 
 static const struct iio_chan_spec ad7606_channels[] = {
 	IIO_CHAN_SOFT_TIMESTAMP(8),
@@ -311,17 +322,24 @@ static const struct ad7606_chip_info ad7606_chip_info_tbl[] = {
 	/*
 	 * More devices added in future
 	 */
+	[ID_AD7605_4] = {
+		.channels = ad7605_channels,
+		.num_channels = 5,
+	},
 	[ID_AD7606_8] = {
 		.channels = ad7606_channels,
 		.num_channels = 9,
+		.has_oversampling = true,
 	},
 	[ID_AD7606_6] = {
 		.channels = ad7606_channels,
 		.num_channels = 7,
+		.has_oversampling = true,
 	},
 	[ID_AD7606_4] = {
 		.channels = ad7606_channels,
 		.num_channels = 5,
+		.has_oversampling = true,
 	},
 };
 
@@ -352,6 +370,9 @@ static int ad7606_request_gpios(struct ad7606_state *st)
 	if (IS_ERR(st->gpio_frstdata))
 		return PTR_ERR(st->gpio_frstdata);
 
+	if (!st->chip_info->has_oversampling)
+		return 0;
+
 	st->gpio_os = devm_gpiod_get_array_optional(dev, "oversampling-ratio",
 			GPIOD_OUT_LOW);
 	return PTR_ERR_OR_ZERO(st->gpio_os);
@@ -376,27 +397,24 @@ static irqreturn_t ad7606_interrupt(int irq, void *dev_id)
 };
 
 static const struct iio_info ad7606_info_no_os_or_range = {
-	.driver_module = THIS_MODULE,
 	.read_raw = &ad7606_read_raw,
 };
 
 static const struct iio_info ad7606_info_os_and_range = {
-	.driver_module = THIS_MODULE,
 	.read_raw = &ad7606_read_raw,
 	.write_raw = &ad7606_write_raw,
 	.attrs = &ad7606_attribute_group_os_and_range,
 };
 
 static const struct iio_info ad7606_info_os = {
-	.driver_module = THIS_MODULE,
 	.read_raw = &ad7606_read_raw,
 	.write_raw = &ad7606_write_raw,
 	.attrs = &ad7606_attribute_group_os,
 };
 
 static const struct iio_info ad7606_info_range = {
-	.driver_module = THIS_MODULE,
 	.read_raw = &ad7606_read_raw,
+	.write_raw = &ad7606_write_raw,
 	.attrs = &ad7606_attribute_group_range,
 };
 
@@ -415,9 +433,11 @@ int ad7606_probe(struct device *dev, int irq, void __iomem *base_address,
 	st = iio_priv(indio_dev);
 
 	st->dev = dev;
+	mutex_init(&st->lock);
 	st->bops = bops;
 	st->base_address = base_address;
-	st->range = 5000;
+	/* tied to logic low, analog input range is +/- 5V */
+	st->range = 0;
 	st->oversampling = 1;
 	INIT_WORK(&st->poll_work, &ad7606_poll_bh_to_ring);
 
@@ -431,11 +451,11 @@ int ad7606_probe(struct device *dev, int irq, void __iomem *base_address,
 		return ret;
 	}
 
+	st->chip_info = &ad7606_chip_info_tbl[id];
+
 	ret = ad7606_request_gpios(st);
 	if (ret)
 		goto error_disable_reg;
-
-	st->chip_info = &ad7606_chip_info_tbl[id];
 
 	indio_dev->dev.parent = dev;
 	if (st->gpio_os) {
@@ -525,7 +545,7 @@ static int ad7606_resume(struct device *dev)
 	struct ad7606_state *st = iio_priv(indio_dev);
 
 	if (st->gpio_standby) {
-		gpiod_set_value(st->gpio_range, st->range == 10000);
+		gpiod_set_value(st->gpio_range, st->range);
 		gpiod_set_value(st->gpio_standby, 1);
 		ad7606_reset(st);
 	}
@@ -538,6 +558,6 @@ EXPORT_SYMBOL_GPL(ad7606_pm_ops);
 
 #endif
 
-MODULE_AUTHOR("Michael Hennerich <hennerich@blackfin.uclinux.org>");
+MODULE_AUTHOR("Michael Hennerich <michael.hennerich@analog.com>");
 MODULE_DESCRIPTION("Analog Devices AD7606 ADC");
 MODULE_LICENSE("GPL v2");

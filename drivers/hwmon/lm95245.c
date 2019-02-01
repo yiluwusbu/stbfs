@@ -541,7 +541,8 @@ static const struct regmap_config lm95245_regmap_config = {
 	.writeable_reg = lm95245_is_writeable_reg,
 	.volatile_reg = lm95245_is_volatile_reg,
 	.cache_type = REGCACHE_RBTREE,
-	.use_single_rw = true,
+	.use_single_read = true,
+	.use_single_write = true,
 };
 
 static const u32 lm95245_chip_config[] = {
@@ -622,10 +623,18 @@ static const struct i2c_device_id lm95245_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, lm95245_id);
 
+static const struct of_device_id lm95245_of_match[] = {
+	{ .compatible = "national,lm95235" },
+	{ .compatible = "national,lm95245" },
+	{ },
+};
+MODULE_DEVICE_TABLE(of, lm95245_of_match);
+
 static struct i2c_driver lm95245_driver = {
 	.class		= I2C_CLASS_HWMON,
 	.driver = {
 		.name	= "lm95245",
+		.of_match_table = of_match_ptr(lm95245_of_match),
 	},
 	.probe		= lm95245_probe,
 	.id_table	= lm95245_id,

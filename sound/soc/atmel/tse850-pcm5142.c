@@ -1,44 +1,38 @@
-/*
- * TSE-850 audio - ASoC driver for the Axentia TSE-850 with a PCM5142 codec
- *
- * Copyright (C) 2016 Axentia Technologies AB
- *
- * Author: Peter Rosin <peda@axentia.se>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
-
-/*
- *               loop1 relays
- *   IN1 +---o  +------------+  o---+ OUT1
- *            \                /
- *             +              +
- *             |   /          |
- *             +--o  +--.     |
- *             |  add   |     |
- *             |        V     |
- *             |      .---.   |
- *   DAC +----------->|Sum|---+
- *             |      '---'   |
- *             |              |
- *             +              +
- *
- *   IN2 +---o--+------------+--o---+ OUT2
- *               loop2 relays
- *
- * The 'loop1' gpio pin controlls two relays, which are either in loop
- * position, meaning that input and output are directly connected, or
- * they are in mixer position, meaning that the signal is passed through
- * the 'Sum' mixer. Similarly for 'loop2'.
- *
- * In the above, the 'loop1' relays are inactive, thus feeding IN1 to the
- * mixer (if 'add' is active) and feeding the mixer output to OUT1. The
- * 'loop2' relays are active, short-cutting the TSE-850 from channel 2.
- * IN1, IN2, OUT1 and OUT2 are TSE-850 connectors and DAC is the PCB name
- * of the (filtered) output from the PCM5142 codec.
- */
+// SPDX-License-Identifier: GPL-2.0
+//
+// TSE-850 audio - ASoC driver for the Axentia TSE-850 with a PCM5142 codec
+//
+// Copyright (C) 2016 Axentia Technologies AB
+//
+// Author: Peter Rosin <peda@axentia.se>
+//
+//               loop1 relays
+//   IN1 +---o  +------------+  o---+ OUT1
+//            \                /
+//             +              +
+//             |   /          |
+//             +--o  +--.     |
+//             |  add   |     |
+//             |        V     |
+//             |      .---.   |
+//   DAC +----------->|Sum|---+
+//             |      '---'   |
+//             |              |
+//             +              +
+//
+//   IN2 +---o--+------------+--o---+ OUT2
+//               loop2 relays
+//
+// The 'loop1' gpio pin controlls two relays, which are either in loop
+// position, meaning that input and output are directly connected, or
+// they are in mixer position, meaning that the signal is passed through
+// the 'Sum' mixer. Similarly for 'loop2'.
+//
+// In the above, the 'loop1' relays are inactive, thus feeding IN1 to the
+// mixer (if 'add' is active) and feeding the mixer output to OUT1. The
+// 'loop2' relays are active, short-cutting the TSE-850 from channel 2.
+// IN1, IN2, OUT1 and OUT2 are TSE-850 connectors and DAC is the PCB name
+// of the (filtered) output from the PCM5142 codec.
 
 #include <linux/clk.h>
 #include <linux/gpio.h>
@@ -51,11 +45,7 @@
 #include <sound/soc.h>
 #include <sound/pcm_params.h>
 
-#include "atmel_ssc_dai.h"
-
 struct tse850_priv {
-	int ssc_id;
-
 	struct gpio_desc *add;
 	struct gpio_desc *loop1;
 	struct gpio_desc *loop2;
@@ -231,7 +221,7 @@ int tse850_put_ana(struct snd_kcontrol *kctrl,
 static const char * const mux_text[] = { "Mixer", "Loop" };
 
 static const struct soc_enum mux_enum =
-	SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, 2, mux_text);
+	SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, ARRAY_SIZE(mux_text), mux_text);
 
 static const struct snd_kcontrol_new mux1 =
 	SOC_DAPM_ENUM_EXT("MUX1", mux_enum, tse850_get_mux1, tse850_put_mux1);
@@ -256,7 +246,7 @@ static const char * const ana_text[] = {
 };
 
 static const struct soc_enum ana_enum =
-	SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, 9, ana_text);
+	SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, ARRAY_SIZE(ana_text), ana_text);
 
 static const struct snd_kcontrol_new out =
 	SOC_DAPM_ENUM_EXT("ANA", ana_enum, tse850_get_ana, tse850_put_ana);
@@ -329,23 +319,20 @@ static int tse850_dt_init(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct device_node *codec_np, *cpu_np;
-	struct snd_soc_card *card = &tse850_card;
 	struct snd_soc_dai_link *dailink = &tse850_dailink;
-	struct tse850_priv *tse850 = snd_soc_card_get_drvdata(card);
 
 	if (!np) {
 		dev_err(&pdev->dev, "only device tree supported\n");
 		return -EINVAL;
 	}
 
-	cpu_np = of_parse_phandle(np, "axentia,ssc-controller", 0);
+	cpu_np = of_parse_phandle(np, "axentia,cpu-dai", 0);
 	if (!cpu_np) {
-		dev_err(&pdev->dev, "failed to get dai and pcm info\n");
+		dev_err(&pdev->dev, "failed to get cpu dai\n");
 		return -EINVAL;
 	}
 	dailink->cpu_of_node = cpu_np;
 	dailink->platform_of_node = cpu_np;
-	tse850->ssc_id = of_alias_get_id(cpu_np, "ssc");
 	of_node_put(cpu_np);
 
 	codec_np = of_parse_phandle(np, "axentia,audio-codec", 0);
@@ -415,23 +402,14 @@ static int tse850_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	ret = atmel_ssc_set_audio(tse850->ssc_id);
-	if (ret != 0) {
-		dev_err(dev,
-			"failed to set SSC %d for audio\n", tse850->ssc_id);
-		goto err_disable_ana;
-	}
-
 	ret = snd_soc_register_card(card);
 	if (ret) {
 		dev_err(dev, "snd_soc_register_card failed\n");
-		goto err_put_audio;
+		goto err_disable_ana;
 	}
 
 	return 0;
 
-err_put_audio:
-	atmel_ssc_put_audio(tse850->ssc_id);
 err_disable_ana:
 	regulator_disable(tse850->ana);
 	return ret;
@@ -443,7 +421,6 @@ static int tse850_remove(struct platform_device *pdev)
 	struct tse850_priv *tse850 = snd_soc_card_get_drvdata(card);
 
 	snd_soc_unregister_card(card);
-	atmel_ssc_put_audio(tse850->ssc_id);
 	regulator_disable(tse850->ana);
 
 	return 0;
@@ -469,4 +446,4 @@ module_platform_driver(tse850_driver);
 /* Module information */
 MODULE_AUTHOR("Peter Rosin <peda@axentia.se>");
 MODULE_DESCRIPTION("ALSA SoC driver for TSE-850 with PCM5142 codec");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");

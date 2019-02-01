@@ -12,10 +12,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 
@@ -573,7 +569,7 @@ static int cx2341x_ctrl_query_fill(struct v4l2_queryctrl *qctrl,
 		qctrl->step = step;
 		qctrl->default_value = def;
 		qctrl->reserved[0] = qctrl->reserved[1] = 0;
-		strlcpy(qctrl->name, name, sizeof(qctrl->name));
+		strscpy(qctrl->name, name, sizeof(qctrl->name));
 		return 0;
 
 	default:

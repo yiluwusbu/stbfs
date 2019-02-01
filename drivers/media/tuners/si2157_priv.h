@@ -21,6 +21,13 @@
 #include <media/v4l2-mc.h>
 #include "si2157.h"
 
+enum si2157_pads {
+	SI2157_PAD_RF_INPUT,
+	SI2157_PAD_VID_OUT,
+	SI2157_PAD_AUD_OUT,
+	SI2157_NUM_PADS
+};
+
 /* state struct */
 struct si2157_dev {
 	struct mutex i2c_mutex;
@@ -35,13 +42,14 @@ struct si2157_dev {
 #if defined(CONFIG_MEDIA_CONTROLLER)
 	struct media_device	*mdev;
 	struct media_entity	ent;
-	struct media_pad	pad[TUNER_NUM_PADS];
+	struct media_pad	pad[SI2157_NUM_PADS];
 #endif
 
 };
 
 #define SI2157_CHIPTYPE_SI2157 0
 #define SI2157_CHIPTYPE_SI2146 1
+#define SI2157_CHIPTYPE_SI2141 2
 
 /* firmware command struct */
 #define SI2157_ARGLEN      30
@@ -52,5 +60,6 @@ struct si2157_cmd {
 };
 
 #define SI2158_A20_FIRMWARE "dvb-tuner-si2158-a20-01.fw"
+#define SI2141_A10_FIRMWARE "dvb-tuner-si2141-a10-01.fw"
 
 #endif

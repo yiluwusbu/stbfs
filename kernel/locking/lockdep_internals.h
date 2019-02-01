@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * kernel/lockdep_internals.h
  *
@@ -46,13 +47,13 @@ enum {
 		(LOCKF_USED_IN_HARDIRQ_READ | LOCKF_USED_IN_SOFTIRQ_READ)
 
 /*
- * CONFIG_PROVE_LOCKING_SMALL is defined for sparc. Sparc requires .text,
+ * CONFIG_LOCKDEP_SMALL is defined for sparc. Sparc requires .text,
  * .data and .bss to fit in required 32MB limit for the kernel. With
- * PROVE_LOCKING we could go over this limit and cause system boot-up problems.
+ * CONFIG_LOCKDEP we could go over this limit and cause system boot-up problems.
  * So, reduce the static allocations for lockdeps related structures so that
  * everything fits in current required size limit.
  */
-#ifdef CONFIG_PROVE_LOCKING_SMALL
+#ifdef CONFIG_LOCKDEP_SMALL
 /*
  * MAX_LOCKDEP_ENTRIES is the maximum number of lock dependencies
  * we track.
@@ -143,15 +144,23 @@ struct lockdep_stats {
 	int	redundant_softirqs_on;
 	int	redundant_softirqs_off;
 	int	nr_unused_locks;
+	int	nr_redundant_checks;
+	int	nr_redundant;
 	int	nr_cyclic_checks;
 	int	nr_cyclic_check_recursions;
 	int	nr_find_usage_forwards_checks;
 	int	nr_find_usage_forwards_recursions;
 	int	nr_find_usage_backwards_checks;
 	int	nr_find_usage_backwards_recursions;
+
+	/*
+	 * Per lock class locking operation stat counts
+	 */
+	unsigned long lock_class_ops[MAX_LOCKDEP_KEYS];
 };
 
 DECLARE_PER_CPU(struct lockdep_stats, lockdep_stats);
+extern struct lock_class lock_classes[MAX_LOCKDEP_KEYS];
 
 #define __debug_atomic_inc(ptr)					\
 	this_cpu_inc(lockdep_stats.ptr);
@@ -176,9 +185,30 @@ DECLARE_PER_CPU(struct lockdep_stats, lockdep_stats);
 	}								\
 	__total;							\
 })
+
+static inline void debug_class_ops_inc(struct lock_class *class)
+{
+	int idx;
+
+	idx = class - lock_classes;
+	__debug_atomic_inc(lock_class_ops[idx]);
+}
+
+static inline unsigned long debug_class_ops_read(struct lock_class *class)
+{
+	int idx, cpu;
+	unsigned long ops = 0;
+
+	idx = class - lock_classes;
+	for_each_possible_cpu(cpu)
+		ops += per_cpu(lockdep_stats.lock_class_ops[idx], cpu);
+	return ops;
+}
+
 #else
 # define __debug_atomic_inc(ptr)	do { } while (0)
 # define debug_atomic_inc(ptr)		do { } while (0)
 # define debug_atomic_dec(ptr)		do { } while (0)
 # define debug_atomic_read(ptr)		0
+# define debug_class_ops_inc(ptr)	do { } while (0)
 #endif

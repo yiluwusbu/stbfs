@@ -1,19 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2010 Realtek Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
  *
  * Modifications for inclusion into the Linux staging tree are
  * Copyright(c) 2010 Larry Finger. All rights reserved.
@@ -144,7 +132,7 @@ struct disconnect_parm {
  * #define IW_MODE_REPEAT	4	// Wireless Repeater (forwarder)
  * #define IW_MODE_SECOND	5	// Secondary master/repeater (backup)
  * #define IW_MODE_MONITOR	6	// Passive monitor (listen only)
-*/
+ */
 struct	setopmode_parm {
 	u8	mode;
 	u8	rsvd[3];
@@ -156,9 +144,9 @@ struct	setopmode_parm {
  * Command-Event Mode
  */
 struct sitesurvey_parm {
-	sint passive_mode;	/*active: 1, passive: 0 */
-	sint bsslimit;	/* 1 ~ 48 */
-	sint	ss_ssidlen;
+	__le32	passive_mode;	/*active: 1, passive: 0 */
+	__le32	bsslimit;	/* 1 ~ 48 */
+	__le32	ss_ssidlen;
 	u8	ss_ssid[IW_ESSID_MAX_SIZE + 1];
 };
 

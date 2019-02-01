@@ -14,10 +14,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -1605,7 +1601,7 @@ static int sd_chip_info(struct gspca_dev *gspca_dev,
 	if (chip->match.addr > 1)
 		return -EINVAL;
 	if (chip->match.addr == 1)
-		strlcpy(chip->name, "sensor", sizeof(chip->name));
+		strscpy(chip->name, "sensor", sizeof(chip->name));
 	return 0;
 }
 #endif
@@ -2157,7 +2153,7 @@ static void qual_upd(struct work_struct *work)
 
 	/* To protect gspca_dev->usb_buf and gspca_dev->usb_err */
 	mutex_lock(&gspca_dev->usb_lock);
-	PDEBUG(D_STREAM, "qual_upd %d%%", qual);
+	gspca_dbg(gspca_dev, D_STREAM, "qual_upd %d%%\n", qual);
 	gspca_dev->usb_err = 0;
 	set_quality(gspca_dev, qual);
 	mutex_unlock(&gspca_dev->usb_lock);

@@ -149,12 +149,11 @@ struct fimc_md {
 	} clk_provider;
 
 	struct v4l2_async_notifier subdev_notifier;
-	struct v4l2_async_subdev *async_subdevs[FIMC_MAX_SENSORS];
 
 	bool user_subdev_api;
 	spinlock_t slock;
 	struct list_head pipelines;
-	struct media_entity_graph link_setup_graph;
+	struct media_graph link_setup_graph;
 };
 
 static inline

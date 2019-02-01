@@ -94,7 +94,7 @@ static void __init xtfpga_clk_setup(struct device_node *np)
 	u32 freq;
 
 	if (!base) {
-		pr_err("%s: invalid address\n", np->name);
+		pr_err("%pOFn: invalid address\n", np);
 		return;
 	}
 
@@ -103,12 +103,12 @@ static void __init xtfpga_clk_setup(struct device_node *np)
 	clk = clk_register_fixed_rate(NULL, np->name, NULL, 0, freq);
 
 	if (IS_ERR(clk)) {
-		pr_err("%s: clk registration failed\n", np->name);
+		pr_err("%pOFn: clk registration failed\n", np);
 		return;
 	}
 
 	if (of_clk_add_provider(np, of_clk_src_simple_get, clk)) {
-		pr_err("%s: clk provider registration failed\n", np->name);
+		pr_err("%pOFn: clk provider registration failed\n", np);
 		return;
 	}
 }
@@ -175,8 +175,8 @@ static struct resource ethoc_res[] = {
 		.flags = IORESOURCE_MEM,
 	},
 	[2] = { /* IRQ number */
-		.start = OETH_IRQ,
-		.end   = OETH_IRQ,
+		.start = XTENSA_PIC_LINUX_IRQ(OETH_IRQ),
+		.end   = XTENSA_PIC_LINUX_IRQ(OETH_IRQ),
 		.flags = IORESOURCE_IRQ,
 	},
 };
@@ -213,8 +213,8 @@ static struct resource c67x00_res[] = {
 		.flags = IORESOURCE_MEM,
 	},
 	[1] = { /* IRQ number */
-		.start = C67X00_IRQ,
-		.end   = C67X00_IRQ,
+		.start = XTENSA_PIC_LINUX_IRQ(C67X00_IRQ),
+		.end   = XTENSA_PIC_LINUX_IRQ(C67X00_IRQ),
 		.flags = IORESOURCE_IRQ,
 	},
 };
@@ -247,7 +247,7 @@ static struct resource serial_resource = {
 static struct plat_serial8250_port serial_platform_data[] = {
 	[0] = {
 		.mapbase	= DUART16552_PADDR,
-		.irq		= DUART16552_INTNUM,
+		.irq		= XTENSA_PIC_LINUX_IRQ(DUART16552_INTNUM),
 		.flags		= UPF_BOOT_AUTOCONF | UPF_SKIP_TEST |
 				  UPF_IOREMAP,
 		.iotype		= XCHAL_HAVE_BE ? UPIO_MEM32BE : UPIO_MEM32,

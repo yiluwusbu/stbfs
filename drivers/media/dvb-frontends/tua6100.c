@@ -1,4 +1,4 @@
-/**
+/*
  * Driver for Infineon tua6100 pll.
  *
  * (c) 2006 Andrew de Quincey
@@ -22,10 +22,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/slab.h>
@@ -159,9 +155,9 @@ static int tua6100_get_frequency(struct dvb_frontend *fe, u32 *frequency)
 static const struct dvb_tuner_ops tua6100_tuner_ops = {
 	.info = {
 		.name = "Infineon TUA6100",
-		.frequency_min = 950000,
-		.frequency_max = 2150000,
-		.frequency_step = 1000,
+		.frequency_min_hz  =  950 * MHz,
+		.frequency_max_hz  = 2150 * MHz,
+		.frequency_step_hz =    1 * MHz,
 	},
 	.release = tua6100_release,
 	.sleep = tua6100_sleep,

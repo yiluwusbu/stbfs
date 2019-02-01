@@ -12,10 +12,6 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/i2c.h>
@@ -62,8 +58,6 @@ MODULE_PARM_DESC(debug, "set debug level");
 })
 
 /* ------------------------------------------------------------------------- */
-
-#define MHz 1000000
 
 enum mxl5007t_mode {
 	MxL_MODE_ISDBT     =    0,

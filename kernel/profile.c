@@ -16,7 +16,7 @@
 
 #include <linux/export.h>
 #include <linux/profile.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/notifier.h>
 #include <linux/mm.h>
 #include <linux/cpumask.h>
@@ -25,6 +25,8 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
+#include <linux/sched/stat.h>
+
 #include <asm/sections.h>
 #include <asm/irq_regs.h>
 #include <asm/ptrace.h>

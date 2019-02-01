@@ -221,11 +221,12 @@ void del_sysfs_port_mcg_attr(struct mlx4_ib_dev *device, int port_num,
 static int add_port_entries(struct mlx4_ib_dev *device, int port_num)
 {
 	int i;
-	char buff[10];
+	char buff[11];
 	struct mlx4_ib_iov_port *port = NULL;
 	int ret = 0 ;
 	struct ib_port_attr attr;
 
+	memset(&attr, 0, sizeof(attr));
 	/* get the physical gid and pkey table sizes.*/
 	ret = __mlx4_ib_query_port(&device->ib_dev, port_num, &attr, 1);
 	if (ret)
@@ -817,9 +818,7 @@ int mlx4_ib_device_register_sysfs(struct mlx4_ib_dev *dev)
 	if (!mlx4_is_master(dev->dev))
 		return 0;
 
-	dev->iov_parent =
-		kobject_create_and_add("iov",
-				       kobject_get(dev->ib_dev.ports_parent->parent));
+	dev->iov_parent = kobject_create_and_add("iov", &dev->ib_dev.dev.kobj);
 	if (!dev->iov_parent) {
 		ret = -ENOMEM;
 		goto err;
@@ -849,7 +848,6 @@ err_add_entries:
 err_ports:
 	kobject_put(dev->iov_parent);
 err:
-	kobject_put(dev->ib_dev.ports_parent->parent);
 	pr_err("mlx4_ib_device_register_sysfs error (%d)\n", ret);
 	return ret;
 }
@@ -885,5 +883,4 @@ void mlx4_ib_device_unregister_sysfs(struct mlx4_ib_dev *device)
 	kobject_put(device->ports_parent);
 	kobject_put(device->iov_parent);
 	kobject_put(device->iov_parent);
-	kobject_put(device->ib_dev.ports_parent->parent);
 }

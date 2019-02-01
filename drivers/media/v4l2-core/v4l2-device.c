@@ -178,7 +178,8 @@ int v4l2_device_register_subdev(struct v4l2_device *v4l2_dev,
 
 	sd->v4l2_dev = v4l2_dev;
 	/* This just returns 0 if either of the two args is NULL */
-	err = v4l2_ctrl_add_handler(v4l2_dev->ctrl_handler, sd->ctrl_handler, NULL);
+	err = v4l2_ctrl_add_handler(v4l2_dev->ctrl_handler, sd->ctrl_handler,
+				    NULL, true);
 	if (err)
 		goto error_module;
 
@@ -235,6 +236,9 @@ int v4l2_device_register_subdev_nodes(struct v4l2_device *v4l2_dev)
 		if (!(sd->flags & V4L2_SUBDEV_FL_HAS_DEVNODE))
 			continue;
 
+		if (sd->devnode)
+			continue;
+
 		vdev = kzalloc(sizeof(*vdev), GFP_KERNEL);
 		if (!vdev) {
 			err = -ENOMEM;
@@ -242,7 +246,7 @@ int v4l2_device_register_subdev_nodes(struct v4l2_device *v4l2_dev)
 		}
 
 		video_set_drvdata(vdev, sd);
-		strlcpy(vdev->name, sd->name, sizeof(vdev->name));
+		strscpy(vdev->name, sd->name, sizeof(vdev->name));
 		vdev->v4l2_dev = v4l2_dev;
 		vdev->fops = &v4l2_subdev_fops;
 		vdev->release = v4l2_device_release_subdev_node;
@@ -253,6 +257,7 @@ int v4l2_device_register_subdev_nodes(struct v4l2_device *v4l2_dev)
 			kfree(vdev);
 			goto clean_up;
 		}
+		sd->devnode = vdev;
 #if defined(CONFIG_MEDIA_CONTROLLER)
 		sd->entity.info.dev.major = VIDEO_MAJOR;
 		sd->entity.info.dev.minor = vdev->minor;
@@ -263,14 +268,14 @@ int v4l2_device_register_subdev_nodes(struct v4l2_device *v4l2_dev)
 
 			link = media_create_intf_link(&sd->entity,
 						      &vdev->intf_devnode->intf,
-						      MEDIA_LNK_FL_ENABLED);
+						      MEDIA_LNK_FL_ENABLED |
+						      MEDIA_LNK_FL_IMMUTABLE);
 			if (!link) {
 				err = -ENOMEM;
 				goto clean_up;
 			}
 		}
 #endif
-		sd->devnode = vdev;
 	}
 	return 0;
 

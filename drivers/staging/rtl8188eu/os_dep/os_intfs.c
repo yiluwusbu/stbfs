@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2011 Realtek Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
  *
  ******************************************************************************/
 #define _OS_INTFS_C_
@@ -48,9 +40,6 @@ module_param(rtw_ips_mode, int, 0644);
 MODULE_PARM_DESC(rtw_ips_mode, "The default IPS mode");
 
 static int rtw_debug = 1;
-
-static int rtw_software_encrypt;
-static int rtw_software_decrypt;
 
 static int rtw_acm_method;/*  0:By SW 1:By HW. */
 
@@ -166,8 +155,6 @@ static void loadparam(struct adapter *padapter, struct net_device *pnetdev)
 	registry_par->power_mgnt = (u8)rtw_power_mgnt;
 	registry_par->ips_mode = (u8)rtw_ips_mode;
 	registry_par->mp_mode = 0;
-	registry_par->software_encrypt = (u8)rtw_software_encrypt;
-	registry_par->software_decrypt = (u8)rtw_software_decrypt;
 	registry_par->acm_method = (u8)rtw_acm_method;
 
 	 /* UAPSD */
@@ -258,7 +245,8 @@ static unsigned int rtw_classify8021d(struct sk_buff *skb)
 }
 
 static u16 rtw_select_queue(struct net_device *dev, struct sk_buff *skb,
-			    void *accel_priv, select_queue_fallback_t fallback)
+			    struct net_device *sb_dev,
+			    select_queue_fallback_t fallback)
 {
 	struct adapter	*padapter = rtw_netdev_priv(dev);
 	struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
@@ -324,7 +312,7 @@ struct net_device *rtw_init_netdev(struct adapter *old_padapter)
 
 	RT_TRACE(_module_os_intfs_c_, _drv_info_, ("+init_net_dev\n"));
 
-	if (old_padapter != NULL)
+	if (old_padapter)
 		pnetdev = rtw_alloc_etherdev_with_old_priv((void *)old_padapter);
 
 	if (!pnetdev)
@@ -368,7 +356,6 @@ void rtw_stop_drv_threads(struct adapter *padapter)
 	complete(&padapter->cmdpriv.cmd_queue_comp);
 	if (padapter->cmdThread)
 		wait_for_completion_interruptible(&padapter->cmdpriv.terminate_cmdthread_comp);
-
 }
 
 static u8 rtw_init_default_value(struct adapter *padapter)
@@ -393,8 +380,6 @@ static u8 rtw_init_default_value(struct adapter *padapter)
 
 	/* security_priv */
 	psecuritypriv->binstallGrpkey = _FAIL;
-	psecuritypriv->sw_encrypt = pregistrypriv->software_encrypt;
-	psecuritypriv->sw_decrypt = pregistrypriv->software_decrypt;
 	psecuritypriv->dot11AuthAlgrthm = dot11AuthAlgrthm_Open;
 	psecuritypriv->dot11PrivacyAlgrthm = _NO_PRIVACY_;
 	psecuritypriv->dot11PrivacyKeyIndex = 0;
@@ -413,7 +398,6 @@ static u8 rtw_init_default_value(struct adapter *padapter)
 	/* misc. */
 	padapter->bReadPortCancel = false;
 	padapter->bWritePortCancel = false;
-	padapter->bRxRSSIDisplay = 0;
 	return _SUCCESS;
 }
 
@@ -426,7 +410,6 @@ u8 rtw_reset_drv_sw(struct adapter *padapter)
 	rtw_hal_def_value_init(padapter);
 	padapter->bReadPortCancel = false;
 	padapter->bWritePortCancel = false;
-	padapter->bRxRSSIDisplay = 0;
 	pmlmepriv->scan_interval = SCAN_INTERVAL;/*  30*2 sec = 60sec */
 
 	padapter->xmitpriv.tx_pkts = 0;
@@ -449,7 +432,6 @@ u8 rtw_reset_drv_sw(struct adapter *padapter)
 u8 rtw_init_drv_sw(struct adapter *padapter)
 {
 	u8	ret8 = _SUCCESS;
-
 
 	RT_TRACE(_module_os_intfs_c_, _drv_info_, ("+rtw_init_drv_sw\n"));
 
@@ -506,7 +488,6 @@ u8 rtw_init_drv_sw(struct adapter *padapter)
 
 exit:
 	RT_TRACE(_module_os_intfs_c_, _drv_info_, ("-rtw_init_drv_sw\n"));
-
 
 	return ret8;
 }
@@ -662,14 +643,13 @@ int  ips_netdrv_open(struct adapter *padapter)
 	mod_timer(&padapter->mlmepriv.dynamic_chk_timer,
 		  jiffies + msecs_to_jiffies(5000));
 
-	 return _SUCCESS;
+	return _SUCCESS;
 
 netdev_open_error:
 	DBG_88E("-ips_netdrv_open - drv_open failure, bup =%d\n", padapter->bup);
 
 	return _FAIL;
 }
-
 
 int rtw_ips_pwr_up(struct adapter *padapter)
 {

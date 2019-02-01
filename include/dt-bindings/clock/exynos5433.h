@@ -1,10 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2014 Samsung Electronics Co., Ltd.
  * Author: Chanwoo Choi <cw00.choi@samsung.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef _DT_BINDINGS_CLOCK_EXYNOS5433_H
@@ -771,7 +768,10 @@
 
 #define CLK_PCLK_DECON					113
 
-#define DISP_NR_CLK					114
+#define CLK_PHYCLK_MIPIDPHY0_BITCLKDIV8_PHY		114
+#define CLK_PHYCLK_MIPIDPHY0_RXCLKESC0_PHY		115
+
+#define DISP_NR_CLK					116
 
 /* CMU_AUD */
 #define CLK_MOUT_AUD_PLL_USER				1

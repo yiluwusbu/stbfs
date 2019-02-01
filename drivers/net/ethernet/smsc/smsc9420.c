@@ -861,7 +861,7 @@ static int smsc9420_rx_poll(struct napi_struct *napi, int budget)
 	smsc9420_pci_flush_write(pd);
 
 	if (work_done < budget) {
-		napi_complete(&pd->napi);
+		napi_complete_done(&pd->napi, work_done);
 
 		/* re-enable RX DMA interrupts */
 		dma_intr_ena = smsc9420_reg_read(pd, DMAC_INTR_ENA);
@@ -1135,10 +1135,10 @@ static int smsc9420_mii_probe(struct net_device *dev)
 		return PTR_ERR(phydev);
 	}
 
+	phy_set_max_speed(phydev, SPEED_100);
+
 	/* mask with MAC supported features */
-	phydev->supported &= (PHY_BASIC_FEATURES | SUPPORTED_Pause |
-			      SUPPORTED_Asym_Pause);
-	phydev->advertising = phydev->supported;
+	phy_support_asym_pause(phydev);
 
 	phy_attached_info(phydev);
 

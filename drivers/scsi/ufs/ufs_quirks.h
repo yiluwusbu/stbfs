@@ -21,21 +21,9 @@
 #define UFS_ANY_VENDOR 0xFFFF
 #define UFS_ANY_MODEL  "ANY_MODEL"
 
-#define MAX_MODEL_LEN 16
-
 #define UFS_VENDOR_TOSHIBA     0x198
 #define UFS_VENDOR_SAMSUNG     0x1CE
 #define UFS_VENDOR_SKHYNIX     0x1AD
-
-/**
- * ufs_device_info - ufs device details
- * @wmanufacturerid: card details
- * @model: card model
- */
-struct ufs_device_info {
-	u16 wmanufacturerid;
-	char model[MAX_MODEL_LEN + 1];
-};
 
 /**
  * ufs_dev_fix - ufs device quirk info
@@ -43,19 +31,18 @@ struct ufs_device_info {
  * @quirk: device quirk
  */
 struct ufs_dev_fix {
-	struct ufs_device_info card;
+	struct ufs_dev_desc card;
 	unsigned int quirk;
 };
 
 #define END_FIX { { 0 }, 0 }
 
 /* add specific device quirk */
-#define UFS_FIX(_vendor, _model, _quirk) \
-		{					  \
-			.card.wmanufacturerid = (_vendor),\
-			.card.model = (_model),		  \
-			.quirk = (_quirk),		  \
-		}
+#define UFS_FIX(_vendor, _model, _quirk) { \
+	.card.wmanufacturerid = (_vendor),\
+	.card.model = (_model),		   \
+	.quirk = (_quirk),		   \
+}
 
 /*
  * If UFS device is having issue in processing LCC (Line Control
@@ -144,7 +131,10 @@ struct ufs_dev_fix {
  */
 #define UFS_DEVICE_QUIRK_HOST_PA_SAVECONFIGTIME	(1 << 8)
 
-struct ufs_hba;
-void ufs_advertise_fixup_device(struct ufs_hba *hba);
+/*
+ * Some UFS devices require VS_DebugSaveConfigTime is 0x10,
+ * enabling this quirk ensure this.
+ */
+#define UFS_DEVICE_QUIRK_HOST_VS_DEBUGSAVECONFIGTIME	(1 << 9)
 
 #endif /* UFS_QUIRKS_H_ */

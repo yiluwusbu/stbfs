@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  *
  * Includes for cdc-acm.c
@@ -95,10 +96,11 @@ struct acm {
 	unsigned long read_urbs_free;
 	struct urb *read_urbs[ACM_NR];
 	struct acm_rb read_buffers[ACM_NR];
-	struct acm_wb *putbuffer;			/* for acm_tty_put_char() */
 	int rx_buflimit;
 	spinlock_t read_lock;
-	int write_used;					/* number of non-empty write buffers */
+	u8 *notification_buffer;			/* to reassemble fragmented notifications */
+	unsigned int nb_index;
+	unsigned int nb_size;
 	int transmitting;
 	spinlock_t write_lock;
 	struct mutex mutex;

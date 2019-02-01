@@ -604,7 +604,7 @@ amd_get_event_constraints_f15h(struct cpu_hw_events *cpuc, int idx,
 			return &amd_f15_PMC20;
 		}
 	case AMD_EVENT_NB:
-		/* moved to perf_event_amd_uncore.c */
+		/* moved to uncore.c */
 		return &emptyconstraint;
 	default:
 		return &emptyconstraint;
@@ -668,6 +668,10 @@ static int __init amd_core_pmu_init(void)
 		 * In family 17h, there are no event constraints in the PMC hardware.
 		 * We fallback to using default amd_get_event_constraints.
 		 */
+		break;
+	case 0x18:
+		pr_cont("Fam18h ");
+		/* Using default amd_get_event_constraints. */
 		break;
 	default:
 		pr_err("core perfctr but no constraints; unknown hardware!\n");

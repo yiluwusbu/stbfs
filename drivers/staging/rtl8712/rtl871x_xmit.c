@@ -1,21 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  * rtl871x_xmit.c
  *
  * Copyright(c) 2007 - 2010 Realtek Corporation. All rights reserved.
  * Linux device driver for RTL8192SU
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
  *
  * Modifications for inclusion into the Linux staging tree are
  * Copyright(c) 2010 Larry Finger. All rights reserved.
@@ -213,8 +201,9 @@ sint r8712_update_attrib(struct _adapter *padapter, _pkt *pkt,
 		if (padapter->pwrctrlpriv.pwr_mode !=
 		    padapter->registrypriv.power_mgnt) {
 			del_timer_sync(&pmlmepriv->dhcp_timer);
-			r8712_set_ps_mode(padapter, padapter->registrypriv.
-				power_mgnt, padapter->registrypriv.smart_ps);
+			r8712_set_ps_mode(padapter,
+					  padapter->registrypriv.power_mgnt,
+					  padapter->registrypriv.smart_ps);
 		}
 	}
 }
@@ -347,7 +336,8 @@ sint r8712_update_attrib(struct _adapter *padapter, _pkt *pkt,
 	 * some settings above.
 	 */
 	if (check_fwstate(pmlmepriv, WIFI_MP_STATE))
-		pattrib->priority = (txdesc.txdw1 >> QSEL_SHT) & 0x1f;
+		pattrib->priority =
+		    (le32_to_cpu(txdesc.txdw1) >> QSEL_SHT) & 0x1f;
 	return _SUCCESS;
 }
 
@@ -415,15 +405,13 @@ static sint xmitframe_addmic(struct _adapter *padapter,
 							   &pframe[10], 6);
 			}
 			if (pqospriv->qos_option == 1)
-					priority[0] = (u8)pxmitframe->
-						      attrib.priority;
+				priority[0] = (u8)pxmitframe->attrib.priority;
 			r8712_secmicappend(&micdata, &priority[0], 4);
 			payload = pframe;
 			for (curfragnum = 0; curfragnum < pattrib->nr_frags;
 			     curfragnum++) {
 				payload = (u8 *)RND4((addr_t)(payload));
-				payload = payload + pattrib->
-					  hdrlen + pattrib->iv_len;
+				payload += pattrib->hdrlen + pattrib->iv_len;
 				if ((curfragnum + 1) == pattrib->nr_frags) {
 					length = pattrib->last_txcmdsz -
 						  pattrib->hdrlen -
@@ -433,7 +421,7 @@ static sint xmitframe_addmic(struct _adapter *padapter,
 					r8712_secmicappend(&micdata, payload,
 							   length);
 					payload = payload + length;
-				} else{
+				} else {
 					length = pxmitpriv->frag_len -
 					    pattrib->hdrlen - pattrib->iv_len -
 					    ((psecuritypriv->sw_encrypt) ?
@@ -488,7 +476,7 @@ static sint make_wlanhdr(struct _adapter *padapter, u8 *hdr,
 	struct ieee80211_hdr *pwlanhdr = (struct ieee80211_hdr *)hdr;
 	struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
 	struct qos_priv *pqospriv = &pmlmepriv->qospriv;
-	u16 *fctrl = &pwlanhdr->frame_ctl;
+	__le16 *fctrl = &pwlanhdr->frame_ctl;
 
 	memset(hdr, 0, WLANHDR_OFFSET);
 	SetFrameSubType(fctrl, pattrib->subtype);
@@ -577,7 +565,7 @@ static sint r8712_put_snap(u8 *data, u16 h_proto)
 	snap->oui[0] = oui[0];
 	snap->oui[1] = oui[1];
 	snap->oui[2] = oui[2];
-	*(u16 *)(data + SNAP_SIZE) = htons(h_proto);
+	*(__be16 *)(data + SNAP_SIZE) = htons(h_proto);
 	return SNAP_SIZE + sizeof(u16);
 }
 
@@ -717,7 +705,7 @@ void r8712_update_protection(struct _adapter *padapter, u8 *ie, uint ie_len)
 {
 	uint	protection;
 	u8	*perp;
-	sint	 erp_len;
+	uint	erp_len;
 	struct	xmit_priv *pxmitpriv = &padapter->xmitpriv;
 	struct	registry_priv *pregistrypriv = &padapter->registrypriv;
 

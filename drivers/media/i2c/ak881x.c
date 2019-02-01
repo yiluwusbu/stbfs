@@ -136,7 +136,6 @@ static int ak881x_get_selection(struct v4l2_subdev *sd,
 
 	switch (sel->target) {
 	case V4L2_SEL_TGT_CROP_BOUNDS:
-	case V4L2_SEL_TGT_CROP_DEFAULT:
 		sel->r.left = 0;
 		sel->r.top = 0;
 		sel->r.width = 720;
@@ -205,14 +204,14 @@ static int ak881x_s_stream(struct v4l2_subdev *sd, int enable)
 	return 0;
 }
 
-static struct v4l2_subdev_core_ops ak881x_subdev_core_ops = {
+static const struct v4l2_subdev_core_ops ak881x_subdev_core_ops = {
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	.g_register	= ak881x_g_register,
 	.s_register	= ak881x_s_register,
 #endif
 };
 
-static struct v4l2_subdev_video_ops ak881x_subdev_video_ops = {
+static const struct v4l2_subdev_video_ops ak881x_subdev_video_ops = {
 	.s_std_output	= ak881x_s_std_output,
 	.s_stream	= ak881x_s_stream,
 };
@@ -224,7 +223,7 @@ static const struct v4l2_subdev_pad_ops ak881x_subdev_pad_ops = {
 	.get_fmt	= ak881x_fill_fmt,
 };
 
-static struct v4l2_subdev_ops ak881x_subdev_ops = {
+static const struct v4l2_subdev_ops ak881x_subdev_ops = {
 	.core	= &ak881x_subdev_core_ops,
 	.video	= &ak881x_subdev_video_ops,
 	.pad	= &ak881x_subdev_pad_ops,

@@ -156,24 +156,21 @@ ltq_etop_poll_rx(struct napi_struct *napi, int budget)
 {
 	struct ltq_etop_chan *ch = container_of(napi,
 				struct ltq_etop_chan, napi);
-	int rx = 0;
-	int complete = 0;
+	int work_done = 0;
 
-	while ((rx < budget) && !complete) {
+	while (work_done < budget) {
 		struct ltq_dma_desc *desc = &ch->dma.desc_base[ch->dma.desc];
 
-		if ((desc->ctl & (LTQ_DMA_OWN | LTQ_DMA_C)) == LTQ_DMA_C) {
-			ltq_etop_hw_receive(ch);
-			rx++;
-		} else {
-			complete = 1;
-		}
+		if ((desc->ctl & (LTQ_DMA_OWN | LTQ_DMA_C)) != LTQ_DMA_C)
+			break;
+		ltq_etop_hw_receive(ch);
+		work_done++;
 	}
-	if (complete || !rx) {
-		napi_complete(&ch->napi);
+	if (work_done < budget) {
+		napi_complete_done(&ch->napi, work_done);
 		ltq_dma_ack_irq(&ch->dma);
 	}
-	return rx;
+	return work_done;
 }
 
 static int
@@ -277,6 +274,7 @@ ltq_etop_hw_init(struct net_device *dev)
 		struct ltq_etop_chan *ch = &priv->ch[i];
 
 		ch->idx = ch->dma.nr = i;
+		ch->dma.dev = &priv->pdev->dev;
 
 		if (IS_TX(i)) {
 			ltq_dma_alloc_tx(&ch->dma);
@@ -367,15 +365,8 @@ ltq_etop_mdio_probe(struct net_device *dev)
 		return PTR_ERR(phydev);
 	}
 
-	phydev->supported &= (SUPPORTED_10baseT_Half
-			      | SUPPORTED_10baseT_Full
-			      | SUPPORTED_100baseT_Half
-			      | SUPPORTED_100baseT_Full
-			      | SUPPORTED_Autoneg
-			      | SUPPORTED_MII
-			      | SUPPORTED_TP);
+	phy_set_max_speed(phydev, SPEED_100);
 
-	phydev->advertising = phydev->supported;
 	phy_attached_info(phydev);
 
 	return 0;
@@ -441,6 +432,7 @@ ltq_etop_open(struct net_device *dev)
 		if (!IS_TX(i) && (!IS_RX(i)))
 			continue;
 		ltq_dma_open(&ch->dma);
+		ltq_dma_enable_irq(&ch->dma);
 		napi_enable(&ch->napi);
 	}
 	phy_start(dev->phydev);
@@ -566,14 +558,6 @@ ltq_etop_set_multicast_list(struct net_device *dev)
 	spin_unlock_irqrestore(&priv->lock, flags);
 }
 
-static u16
-ltq_etop_select_queue(struct net_device *dev, struct sk_buff *skb,
-		      void *accel_priv, select_queue_fallback_t fallback)
-{
-	/* we are currently only using the first queue */
-	return 0;
-}
-
 static int
 ltq_etop_init(struct net_device *dev)
 {
@@ -644,7 +628,7 @@ static const struct net_device_ops ltq_eth_netdev_ops = {
 	.ndo_set_mac_address = ltq_etop_set_mac_address,
 	.ndo_validate_addr = eth_validate_addr,
 	.ndo_set_rx_mode = ltq_etop_set_multicast_list,
-	.ndo_select_queue = ltq_etop_select_queue,
+	.ndo_select_queue = dev_pick_tx_zero,
 	.ndo_init = ltq_etop_init,
 	.ndo_tx_timeout = ltq_etop_tx_timeout,
 };

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/sparc/kernel/setup.c
  *
@@ -82,10 +83,10 @@ static void prom_sync_me(void)
 			     "nop\n\t" : : "r" (&trapbase));
 
 	prom_printf("PROM SYNC COMMAND...\n");
-	show_free_areas(0);
+	show_free_areas(0, NULL);
 	if (!is_idle_task(current)) {
 		local_irq_enable();
-		sys_sync();
+		ksys_sync();
 		local_irq_disable();
 	}
 	prom_printf("Returning to prom\n");
@@ -148,7 +149,7 @@ static void __init boot_flags_init(char *commands)
 {
 	while (*commands) {
 		/* Move to the start of the next "argument". */
-		while (*commands && *commands == ' ')
+		while (*commands == ' ')
 			commands++;
 
 		/* Process any command switches, otherwise skip it. */
@@ -309,25 +310,24 @@ void __init setup_arch(char **cmdline_p)
 
 	register_console(&prom_early_console);
 
-	printk("ARCH: ");
 	switch(sparc_cpu_model) {
 	case sun4m:
-		printk("SUN4M\n");
+		pr_info("ARCH: SUN4M\n");
 		break;
 	case sun4d:
-		printk("SUN4D\n");
+		pr_info("ARCH: SUN4D\n");
 		break;
 	case sun4e:
-		printk("SUN4E\n");
+		pr_info("ARCH: SUN4E\n");
 		break;
 	case sun4u:
-		printk("SUN4U\n");
+		pr_info("ARCH: SUN4U\n");
 		break;
 	case sparc_leon:
-		printk("LEON\n");
+		pr_info("ARCH: LEON\n");
 		break;
 	default:
-		printk("UNKNOWN!\n");
+		pr_info("ARCH: UNKNOWN!\n");
 		break;
 	}
 

@@ -171,7 +171,7 @@ struct spacc_ablk_ctx {
 	 * The fallback cipher. If the operation can't be done in hardware,
 	 * fallback to a software version.
 	 */
-	struct crypto_skcipher		*sw_cipher;
+	struct crypto_sync_skcipher	*sw_cipher;
 };
 
 /* AEAD cipher context. */
@@ -499,10 +499,12 @@ static int spacc_aead_setkey(struct crypto_aead *tfm, const u8 *key,
 	memcpy(ctx->hash_ctx, keys.authkey, keys.authkeylen);
 	ctx->hash_key_len = keys.authkeylen;
 
+	memzero_explicit(&keys, sizeof(keys));
 	return 0;
 
 badkey:
 	crypto_aead_set_flags(tfm, CRYPTO_TFM_RES_BAD_KEY_LEN);
+	memzero_explicit(&keys, sizeof(keys));
 	return -EINVAL;
 }
 
@@ -797,17 +799,17 @@ static int spacc_aes_setkey(struct crypto_ablkcipher *cipher, const u8 *key,
 		 * Set the fallback transform to use the same request flags as
 		 * the hardware transform.
 		 */
-		crypto_skcipher_clear_flags(ctx->sw_cipher,
+		crypto_sync_skcipher_clear_flags(ctx->sw_cipher,
 					    CRYPTO_TFM_REQ_MASK);
-		crypto_skcipher_set_flags(ctx->sw_cipher,
+		crypto_sync_skcipher_set_flags(ctx->sw_cipher,
 					  cipher->base.crt_flags &
 					  CRYPTO_TFM_REQ_MASK);
 
-		err = crypto_skcipher_setkey(ctx->sw_cipher, key, len);
+		err = crypto_sync_skcipher_setkey(ctx->sw_cipher, key, len);
 
 		tfm->crt_flags &= ~CRYPTO_TFM_RES_MASK;
 		tfm->crt_flags |=
-			crypto_skcipher_get_flags(ctx->sw_cipher) &
+			crypto_sync_skcipher_get_flags(ctx->sw_cipher) &
 			CRYPTO_TFM_RES_MASK;
 
 		if (err)
@@ -912,7 +914,7 @@ static int spacc_ablk_do_fallback(struct ablkcipher_request *req,
 	struct crypto_tfm *old_tfm =
 	    crypto_ablkcipher_tfm(crypto_ablkcipher_reqtfm(req));
 	struct spacc_ablk_ctx *ctx = crypto_tfm_ctx(old_tfm);
-	SKCIPHER_REQUEST_ON_STACK(subreq, ctx->sw_cipher);
+	SYNC_SKCIPHER_REQUEST_ON_STACK(subreq, ctx->sw_cipher);
 	int err;
 
 	/*
@@ -920,7 +922,7 @@ static int spacc_ablk_do_fallback(struct ablkcipher_request *req,
 	 * the ciphering has completed, put the old transform back into the
 	 * request.
 	 */
-	skcipher_request_set_tfm(subreq, ctx->sw_cipher);
+	skcipher_request_set_sync_tfm(subreq, ctx->sw_cipher);
 	skcipher_request_set_callback(subreq, req->base.flags, NULL, NULL);
 	skcipher_request_set_crypt(subreq, req->src, req->dst,
 				   req->nbytes, req->info);
@@ -1018,9 +1020,8 @@ static int spacc_ablk_cra_init(struct crypto_tfm *tfm)
 	ctx->generic.flags = spacc_alg->type;
 	ctx->generic.engine = engine;
 	if (alg->cra_flags & CRYPTO_ALG_NEED_FALLBACK) {
-		ctx->sw_cipher = crypto_alloc_skcipher(
-			alg->cra_name, 0, CRYPTO_ALG_ASYNC |
-					  CRYPTO_ALG_NEED_FALLBACK);
+		ctx->sw_cipher = crypto_alloc_sync_skcipher(
+			alg->cra_name, 0, CRYPTO_ALG_NEED_FALLBACK);
 		if (IS_ERR(ctx->sw_cipher)) {
 			dev_warn(engine->dev, "failed to allocate fallback for %s\n",
 				 alg->cra_name);
@@ -1039,7 +1040,7 @@ static void spacc_ablk_cra_exit(struct crypto_tfm *tfm)
 {
 	struct spacc_ablk_ctx *ctx = crypto_tfm_ctx(tfm);
 
-	crypto_free_skcipher(ctx->sw_cipher);
+	crypto_free_sync_skcipher(ctx->sw_cipher);
 }
 
 static int spacc_ablk_encrypt(struct ablkcipher_request *req)
@@ -1125,9 +1126,9 @@ static irqreturn_t spacc_spacc_irq(int irq, void *dev)
 	return IRQ_HANDLED;
 }
 
-static void spacc_packet_timeout(unsigned long data)
+static void spacc_packet_timeout(struct timer_list *t)
 {
-	struct spacc_engine *engine = (struct spacc_engine *)data;
+	struct spacc_engine *engine = from_timer(engine, t, packet_timeout);
 
 	spacc_process_done(engine);
 }
@@ -1167,8 +1168,7 @@ static void spacc_spacc_complete(unsigned long data)
 #ifdef CONFIG_PM
 static int spacc_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct spacc_engine *engine = platform_get_drvdata(pdev);
+	struct spacc_engine *engine = dev_get_drvdata(dev);
 
 	/*
 	 * We only support standby mode. All we have to do is gate the clock to
@@ -1182,8 +1182,7 @@ static int spacc_suspend(struct device *dev)
 
 static int spacc_resume(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct spacc_engine *engine = platform_get_drvdata(pdev);
+	struct spacc_engine *engine = dev_get_drvdata(dev);
 
 	return clk_enable(engine->clk);
 }
@@ -1616,32 +1615,17 @@ static const struct of_device_id spacc_of_id_table[] = {
 MODULE_DEVICE_TABLE(of, spacc_of_id_table);
 #endif /* CONFIG_OF */
 
-static bool spacc_is_compatible(struct platform_device *pdev,
-				const char *spacc_type)
-{
-	const struct platform_device_id *platid = platform_get_device_id(pdev);
-
-	if (platid && !strcmp(platid->name, spacc_type))
-		return true;
-
-#ifdef CONFIG_OF
-	if (of_device_is_compatible(pdev->dev.of_node, spacc_type))
-		return true;
-#endif /* CONFIG_OF */
-
-	return false;
-}
-
 static int spacc_probe(struct platform_device *pdev)
 {
-	int i, err, ret = -EINVAL;
+	int i, err, ret;
 	struct resource *mem, *irq;
+	struct device_node *np = pdev->dev.of_node;
 	struct spacc_engine *engine = devm_kzalloc(&pdev->dev, sizeof(*engine),
 						   GFP_KERNEL);
 	if (!engine)
 		return -ENOMEM;
 
-	if (spacc_is_compatible(pdev, "picochip,spacc-ipsec")) {
+	if (of_device_is_compatible(np, "picochip,spacc-ipsec")) {
 		engine->max_ctxs	= SPACC_CRYPTO_IPSEC_MAX_CTXS;
 		engine->cipher_pg_sz	= SPACC_CRYPTO_IPSEC_CIPHER_PG_SZ;
 		engine->hash_pg_sz	= SPACC_CRYPTO_IPSEC_HASH_PG_SZ;
@@ -1650,7 +1634,7 @@ static int spacc_probe(struct platform_device *pdev)
 		engine->num_algs	= ARRAY_SIZE(ipsec_engine_algs);
 		engine->aeads		= ipsec_engine_aeads;
 		engine->num_aeads	= ARRAY_SIZE(ipsec_engine_aeads);
-	} else if (spacc_is_compatible(pdev, "picochip,spacc-l2")) {
+	} else if (of_device_is_compatible(np, "picochip,spacc-l2")) {
 		engine->max_ctxs	= SPACC_CRYPTO_L2_MAX_CTXS;
 		engine->cipher_pg_sz	= SPACC_CRYPTO_L2_CIPHER_PG_SZ;
 		engine->hash_pg_sz	= SPACC_CRYPTO_L2_HASH_PG_SZ;
@@ -1694,22 +1678,18 @@ static int spacc_probe(struct platform_device *pdev)
 	engine->clk = clk_get(&pdev->dev, "ref");
 	if (IS_ERR(engine->clk)) {
 		dev_info(&pdev->dev, "clk unavailable\n");
-		device_remove_file(&pdev->dev, &dev_attr_stat_irq_thresh);
 		return PTR_ERR(engine->clk);
 	}
 
 	if (clk_prepare_enable(engine->clk)) {
 		dev_info(&pdev->dev, "unable to prepare/enable clk\n");
-		clk_put(engine->clk);
-		return -EIO;
+		ret = -EIO;
+		goto err_clk_put;
 	}
 
-	err = device_create_file(&pdev->dev, &dev_attr_stat_irq_thresh);
-	if (err) {
-		clk_disable_unprepare(engine->clk);
-		clk_put(engine->clk);
-		return err;
-	}
+	ret = device_create_file(&pdev->dev, &dev_attr_stat_irq_thresh);
+	if (ret)
+		goto err_clk_disable;
 
 
 	/*
@@ -1729,8 +1709,7 @@ static int spacc_probe(struct platform_device *pdev)
 	writel(SPA_IRQ_EN_STAT_EN | SPA_IRQ_EN_GLBL_EN,
 	       engine->regs + SPA_IRQ_EN_REG_OFFSET);
 
-	setup_timer(&engine->packet_timeout, spacc_packet_timeout,
-		    (unsigned long)engine);
+	timer_setup(&engine->packet_timeout, spacc_packet_timeout, 0);
 
 	INIT_LIST_HEAD(&engine->pending);
 	INIT_LIST_HEAD(&engine->completed);
@@ -1741,6 +1720,7 @@ static int spacc_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, engine);
 
+	ret = -EINVAL;
 	INIT_LIST_HEAD(&engine->registered_algs);
 	for (i = 0; i < engine->num_algs; ++i) {
 		engine->algs[i].engine = engine;
@@ -1775,6 +1755,16 @@ static int spacc_probe(struct platform_device *pdev)
 				engine->aeads[i].alg.base.cra_name);
 	}
 
+	if (!ret)
+		return 0;
+
+	del_timer_sync(&engine->packet_timeout);
+	device_remove_file(&pdev->dev, &dev_attr_stat_irq_thresh);
+err_clk_disable:
+	clk_disable_unprepare(engine->clk);
+err_clk_put:
+	clk_put(engine->clk);
+
 	return ret;
 }
 
@@ -1803,12 +1793,6 @@ static int spacc_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct platform_device_id spacc_id_table[] = {
-	{ "picochip,spacc-ipsec", },
-	{ "picochip,spacc-l2", },
-	{ }
-};
-
 static struct platform_driver spacc_driver = {
 	.probe		= spacc_probe,
 	.remove		= spacc_remove,
@@ -1819,7 +1803,6 @@ static struct platform_driver spacc_driver = {
 #endif /* CONFIG_PM */
 		.of_match_table	= of_match_ptr(spacc_of_id_table),
 	},
-	.id_table	= spacc_id_table,
 };
 
 module_platform_driver(spacc_driver);
