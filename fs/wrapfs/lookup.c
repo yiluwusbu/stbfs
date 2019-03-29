@@ -253,7 +253,7 @@ static struct dentry *__wrapfs_lookup(struct dentry *dentry,
 	if (err && err != -ENOENT)
 		goto out;
 
-	/* instatiate a new negative dentry */
+	/* instantiate a new negative dentry */
 	this.name = name;
 	this.len = strlen(name);
 	this.hash = full_name_hash(lower_dir_dentry, this.name, this.len);
