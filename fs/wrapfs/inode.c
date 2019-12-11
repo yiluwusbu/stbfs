@@ -290,60 +290,47 @@ out:
 	return err;
 }
 
-static int wrapfs_readlink(struct dentry *dentry, char __user *buf, int bufsiz)
-{
-	int err;
-	struct dentry *lower_dentry;
-	struct path lower_path;
-
-	wrapfs_get_lower_path(dentry, &lower_path);
-	lower_dentry = lower_path.dentry;
-	if (!d_inode(lower_dentry)->i_op ||
-	    !d_inode(lower_dentry)->i_op->readlink) {
-		err = -EINVAL;
-		goto out;
-	}
-
-	err = d_inode(lower_dentry)->i_op->readlink(lower_dentry,
-						    buf, bufsiz);
-	if (err < 0)
-		goto out;
-	fsstack_copy_attr_atime(d_inode(dentry), d_inode(lower_dentry));
-
-out:
-	wrapfs_put_lower_path(dentry, &lower_path);
-	return err;
-}
-
 static const char *wrapfs_get_link(struct dentry *dentry, struct inode *inode,
 				   struct delayed_call *done)
 {
+	DEFINE_DELAYED_CALL(lower_done);
+	struct dentry *lower_dentry;
+	struct path lower_path;
 	char *buf;
-	int len = PAGE_SIZE, err;
-	mm_segment_t old_fs;
+	const char *lower_link;
 
 	if (!dentry)
 		return ERR_PTR(-ECHILD);
 
-	/* This is freed by the put_link method assuming a successful call. */
-	buf = kmalloc(len, GFP_KERNEL);
-	if (!buf) {
-		buf = ERR_PTR(-ENOMEM);
-		return buf;
+	wrapfs_get_lower_path(dentry, &lower_path);
+	lower_dentry = lower_path.dentry;
+
+	/*
+	 * get link from lower file system, but use a separate
+	 * delayed_call callback.
+	 */
+	lower_link = vfs_get_link(lower_dentry, &lower_done);
+	if (IS_ERR(lower_link)) {
+		buf = ERR_CAST(lower_link);
+		goto out;
 	}
 
-	/* read the symlink, and then we will follow it */
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
-	err = wrapfs_readlink(dentry, buf, len);
-	set_fs(old_fs);
-	if (err < 0) {
-		kfree(buf);
-		buf = ERR_PTR(err);
-	} else {
-		buf[err] = '\0';
+	/*
+	 * we can't pass lower link up: have to make private copy and
+	 * pass that.
+	 */
+	buf = kstrdup(lower_link, GFP_KERNEL);
+	do_delayed_call(&lower_done);
+	if (!buf) {
+		buf = ERR_PTR(-ENOMEM);
+		goto out;
 	}
+
+	fsstack_copy_attr_atime(d_inode(dentry), d_inode(lower_dentry));
+
 	set_delayed_call(done, kfree_link, buf);
+out:
+	wrapfs_put_lower_path(dentry, &lower_path);
 	return buf;
 }
 
@@ -553,7 +540,6 @@ out:
 }
 
 const struct inode_operations wrapfs_symlink_iops = {
-	.readlink	= wrapfs_readlink,
 	.permission	= wrapfs_permission,
 	.setattr	= wrapfs_setattr,
 	.getattr	= wrapfs_getattr,
