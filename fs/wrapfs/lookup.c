@@ -71,7 +71,6 @@ static int wrapfs_inode_set(struct inode *inode, void *lower_inode)
 
 struct inode *wrapfs_iget(struct super_block *sb, struct inode *lower_inode)
 {
-	struct wrapfs_inode_info *info;
 	struct inode *inode; /* the new inode to return */
 
 	if (!igrab(lower_inode))
@@ -97,8 +96,6 @@ struct inode *wrapfs_iget(struct super_block *sb, struct inode *lower_inode)
 	}
 
 	/* initialize new inode */
-	info = WRAPFS_I(inode);
-
 	inode->i_ino = lower_inode->i_ino;
 	wrapfs_set_lower_inode(inode, lower_inode);
 
