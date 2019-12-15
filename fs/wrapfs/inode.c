@@ -58,7 +58,7 @@ static int wrapfs_link(struct dentry *old_dentry, struct inode *dir,
 
 	err = vfs_link(lower_old_dentry, d_inode(lower_dir_dentry),
 		       lower_new_dentry, NULL);
-	if (err || !d_inode(lower_new_dentry))
+	if (err || d_really_is_negative(lower_new_dentry))
 		goto out;
 
 	err = wrapfs_interpose(new_dentry, dir->i_sb, &lower_new_path);
@@ -255,11 +255,18 @@ static int wrapfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	lower_new_dir_dentry = dget_parent(lower_new_dentry);
 
 	trap = lock_rename(lower_old_dir_dentry, lower_new_dir_dentry);
-	/* source should not be ancestor of target */
-	if (trap == lower_old_dentry) {
-		err = -EINVAL;
+	err = -EINVAL;
+	/* check for unexpected namespace changes */
+	if (lower_old_dentry->d_parent != lower_old_dir_dentry)
 		goto out;
-	}
+	if (lower_new_dentry->d_parent != lower_new_dir_dentry)
+		goto out;
+	/* check if either dentry got unlinked */
+	if (d_unhashed(lower_old_dentry) || d_unhashed(lower_new_dentry))
+		goto out;
+	/* source should not be ancestor of target */
+	if (trap == lower_old_dentry)
+		goto out;
 	/* target should not be ancestor of source */
 	if (trap == lower_new_dentry) {
 		err = -ENOTEMPTY;
