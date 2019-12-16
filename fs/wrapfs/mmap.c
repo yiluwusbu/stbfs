@@ -11,9 +11,9 @@
 
 #include "wrapfs.h"
 
-static int wrapfs_fault(struct vm_fault *vmf)
+static vm_fault_t wrapfs_fault(struct vm_fault *vmf)
 {
-	int err;
+	vm_fault_t err;
         struct vm_area_struct *vma = vmf->vma;
 	struct file *file, *lower_file;
 	const struct vm_operations_struct *lower_vm_ops;
@@ -42,9 +42,9 @@ static int wrapfs_fault(struct vm_fault *vmf)
 	return err;
 }
 
-static int wrapfs_page_mkwrite(struct vm_fault *vmf)
+static vm_fault_t wrapfs_page_mkwrite(struct vm_fault *vmf)
 {
-	int err = 0;
+	vm_fault_t err = 0;
         struct vm_area_struct *vma = vmf->vma;
 	struct file *file, *lower_file;
 	const struct vm_operations_struct *lower_vm_ops;
