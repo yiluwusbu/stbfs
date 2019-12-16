@@ -36,7 +36,9 @@ static int wrapfs_fault(struct vm_fault *vmf)
 	 * take an explicit file pointer.
 	 */
 	lower_vma.vm_file = lower_file;
+	vmf->vma = &lower_vma; /* override vma temporarily */
 	err = lower_vm_ops->fault(vmf);
+	vmf->vma = vma; /* restore vma*/
 	return err;
 }
 
@@ -68,7 +70,9 @@ static int wrapfs_page_mkwrite(struct vm_fault *vmf)
 	 * ->page_mkwrite to take an explicit file pointer.
 	 */
 	lower_vma.vm_file = lower_file;
+	vmf->vma = &lower_vma; /* override vma temporarily */
 	err = lower_vm_ops->page_mkwrite(vmf);
+	vmf->vma = vma; /* restore vma */
 out:
 	return err;
 }
