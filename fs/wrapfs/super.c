@@ -64,7 +64,7 @@ static int wrapfs_remount_fs(struct super_block *sb, int *flags, char *options)
 	 * can safely accept a few flags (RDONLY, MANDLOCK), and honor
 	 * SILENT, but anything else left over is an error.
 	 */
-	if ((*flags & ~(MS_RDONLY | MS_MANDLOCK | MS_SILENT)) != 0) {
+	if ((*flags & ~(SB_RDONLY | SB_MANDLOCK | SB_SILENT)) != 0) {
 		printk(KERN_ERR
 		       "wrapfs: remount flags 0x%x unsupported\n", *flags);
 		err = -EINVAL;
