@@ -85,6 +85,11 @@ static int wrapfs_unlink(struct inode *dir, struct dentry *dentry)
 	lower_dentry = lower_path.dentry;
 	dget(lower_dentry);
 	lower_dir_dentry = lock_parent(lower_dentry);
+	if (lower_dentry->d_parent != lower_dir_dentry ||
+	    d_unhashed(lower_dentry)) {
+		err = -EINVAL;
+		goto out;
+	}
 
 	err = vfs_unlink(lower_dir_inode, lower_dentry, NULL);
 
@@ -179,6 +184,11 @@ static int wrapfs_rmdir(struct inode *dir, struct dentry *dentry)
 	wrapfs_get_lower_path(dentry, &lower_path);
 	lower_dentry = lower_path.dentry;
 	lower_dir_dentry = lock_parent(lower_dentry);
+	if (lower_dentry->d_parent != lower_dir_dentry ||
+	    d_unhashed(lower_dentry)) {
+		err = -EINVAL;
+		goto out;
+	}
 
 	err = vfs_rmdir(d_inode(lower_dir_dentry), lower_dentry);
 	if (err)
