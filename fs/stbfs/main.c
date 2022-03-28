@@ -63,7 +63,6 @@ static int create_trashbin(struct path * lower_root_path, struct dentry * root_d
 		goto out_free_dentry;
 	}
 	d_set_d_op(trashbin_dentry , &stbfs_dops);
-	d_add(trashbin_dentry, NULL); /* instantiate and hash */
 
 
 	lower_root_dentry = lock_parent(lower_trashbin_dentry);
