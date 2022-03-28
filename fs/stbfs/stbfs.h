@@ -51,8 +51,8 @@ extern int stbfs_init_inode_cache(void);
 extern void stbfs_destroy_inode_cache(void);
 extern int stbfs_init_dentry_cache(void);
 extern void stbfs_destroy_dentry_cache(void);
-extern int new_dentry_private_data(struct dentry *dentry);
-extern void free_dentry_private_data(struct dentry *dentry);
+extern int stbfs_new_dentry_private_data(struct dentry *dentry);
+extern void stbfs_free_dentry_private_data(struct dentry *dentry);
 extern struct dentry *stbfs_lookup(struct inode *dir, struct dentry *dentry,
 				    unsigned int flags);
 extern struct inode *stbfs_iget(struct super_block *sb,

@@ -9,6 +9,105 @@
 #include "stbfs.h"
 #include <linux/module.h>
 
+static int create_trashbin(struct path * lower_root_path, struct dentry * root_dentry)
+{
+	int err=0;
+	struct vfsmount *lower_root_mnt;
+	struct dentry *lower_root_dentry = NULL;
+	struct dentry *trashbin_dentry = NULL;
+	struct dentry *lower_trashbin_dentry=NULL;
+	struct path lower_path;
+	struct qstr this;
+	struct inode * root_inode = d_inode(root_dentry);
+
+	lower_root_dentry = lower_root_path->dentry;
+	lower_root_mnt = lower_root_path->mnt;
+
+	/* Use vfs_path_lookup to check if the dentry exists or not */
+	err = vfs_path_lookup(lower_root_dentry, lower_root_mnt, ".stb", 0,
+			      &lower_path);
+
+	if (!err) {
+		printk(KERN_INFO"stbfs: trashbin alreday exists\n");
+		return 0;
+	}
+		
+	if (err != -ENOENT) {
+		printk(KERN_INFO"stbfs: error when looking up path .stb\n");
+		return err;
+	}
+
+	/* error == -ENOENT, we need to create the trashbin folder */
+	this.name = ".stb";
+	this.len = strlen(this.name);
+	this.hash = full_name_hash(lower_root_dentry, this.name, this.len);
+
+	lower_trashbin_dentry = d_alloc(lower_root_dentry, &this);
+	if (!lower_trashbin_dentry) {
+		err = -ENOMEM;
+		goto out;
+	}
+	d_set_d_op(lower_trashbin_dentry, &stbfs_dops);
+	d_add(lower_trashbin_dentry, NULL); /* instantiate and hash */
+
+	this.hash = full_name_hash(root_dentry, this.name, this.len);
+	trashbin_dentry = d_alloc(root_dentry, &this);
+	if (!trashbin_dentry) {
+		err = -ENOMEM;
+		goto out_free_lower_dentry;
+	}
+
+	err = stbfs_new_dentry_private_data(trashbin_dentry);
+	if (err) {
+		printk(KERN_INFO"stbfs: error in allocating dentry_private_data\n");
+		goto out_free_dentry;
+	}
+	d_set_d_op(trashbin_dentry , &stbfs_dops);
+	d_add(trashbin_dentry, NULL); /* instantiate and hash */
+
+
+	lower_root_dentry = lock_parent(lower_trashbin_dentry);
+	err = vfs_mkdir(d_inode(lower_root_dentry), lower_trashbin_dentry, 0755);
+	if (err) {
+		printk(KERN_INFO"stbfs: error in creating trashbin folder\n");
+		goto unlock_free;
+	}
+	
+	lower_path.dentry = lower_trashbin_dentry;
+	lower_path.mnt = mntget(lower_root_mnt);
+	stbfs_set_lower_path(trashbin_dentry, &lower_path);
+	
+	/* interpose */
+	err = stbfs_interpose(trashbin_dentry, root_dentry->d_sb, &lower_path);
+	if (err) {
+		printk(KERN_INFO"stbfs: error in interpose\n");
+		goto unlock_free;
+	}
+	fsstack_copy_attr_times(root_inode, stbfs_lower_inode(root_inode));
+	fsstack_copy_inode_size(root_inode, d_inode(lower_root_dentry));
+	/* update number of links on parent directory */
+	set_nlink(root_inode, stbfs_lower_inode(root_inode)->i_nlink);
+
+	printk(KERN_INFO"stbfs: trashbin created\n");
+	
+	/* successful */
+	unlock_dir(lower_root_dentry);
+	goto out;
+
+
+unlock_free:
+	unlock_dir(lower_root_dentry);
+out_free_dentry:
+	stbfs_free_dentry_private_data(trashbin_dentry);
+	dput(trashbin_dentry);
+out_free_lower_dentry:
+	dput(lower_trashbin_dentry);
+out:
+	return err;
+
+}
+
+
 /*
  * There is no need to lock the stbfs_super_info's rwsem as there is no
  * way anyone can have a reference to the superblock at this point in time.
@@ -79,7 +178,7 @@ static int stbfs_read_super(struct super_block *sb, void *raw_data, int silent)
 
 	/* link the upper and lower dentries */
 	sb->s_root->d_fsdata = NULL;
-	err = new_dentry_private_data(sb->s_root);
+	err = stbfs_new_dentry_private_data(sb->s_root);
 	if (err)
 		goto out_freeroot;
 
@@ -98,9 +197,14 @@ static int stbfs_read_super(struct super_block *sb, void *raw_data, int silent)
 		printk(KERN_INFO
 		       "stbfs: mounted on top of %s type %s\n",
 		       dev_name, lower_sb->s_type->name);
+	
+	/* create a transhbin */
+	if (create_trashbin(&lower_path, sb->s_root)) {
+		printk("stbfs: failed to create trashbin\n");
+	}
 	goto out; /* all is well */
 
-	/* no longer needed: free_dentry_private_data(sb->s_root); */
+	/* no longer needed: stbfs_free_dentry_private_data(sb->s_root); */
 out_freeroot:
 	dput(sb->s_root);
 out_iput:

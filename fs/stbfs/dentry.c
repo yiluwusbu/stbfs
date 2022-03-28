@@ -36,7 +36,7 @@ static void stbfs_d_release(struct dentry *dentry)
 {
 	/* release and reset the lower paths */
 	stbfs_put_reset_lower_path(dentry);
-	free_dentry_private_data(dentry);
+	stbfs_free_dentry_private_data(dentry);
 	return;
 }
 
