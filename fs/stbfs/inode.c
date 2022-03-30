@@ -8,6 +8,7 @@
 
 #include "stbfs.h"
 
+
 static int stbfs_create(struct inode *dir, struct dentry *dentry,
 			 umode_t mode, bool want_excl)
 {
@@ -73,6 +74,110 @@ out:
 	return err;
 }
 
+static struct dentry *__lookup_hash(const struct qstr *name,
+		struct dentry *base, unsigned int flags)
+{
+	struct dentry *dentry = d_lookup(base, name);
+	struct dentry *old;
+	struct inode *dir = base->d_inode;
+
+	if (dentry)
+		return dentry;
+
+	/* Don't create child dentry for a dead directory. */
+	if (unlikely(IS_DEADDIR(dir)))
+		return ERR_PTR(-ENOENT);
+
+	dentry = d_alloc(base, name);
+	if (unlikely(!dentry))
+		return ERR_PTR(-ENOMEM);
+
+	old = dir->i_op->lookup(dir, dentry, flags);
+	if (unlikely(old)) {
+		dput(dentry);
+		dentry = old;
+	}
+	return dentry;
+}
+
+
+static int stbfs_move_to_trashbin(struct inode *dir, struct dentry *dentry)
+{
+	int err = 0;
+	struct dentry *lower_dentry;
+	struct dentry *lower_stbfile_dentry;
+	struct inode *lower_dir_inode = stbfs_lower_inode(dir);
+	struct dentry *lower_dir_dentry, *lower_trashbin_dentry;
+	struct dentry *trashbin_dentry = global_trashbin;
+	struct inode *trashbin_inode = d_inode(trashbin_dentry);
+	struct path lower_path, lower_trashbin_path;
+	struct qstr qname;
+	char tb_file_name[256];
+
+	if (dentry == trashbin_dentry) {
+		return -EPERM;
+	}
+
+	stbfs_get_lower_path(dentry, &lower_path);
+	stbfs_get_lower_path(trashbin_dentry, &lower_trashbin_path);
+	lower_dentry = lower_path.dentry;
+	lower_trashbin_dentry = lower_trashbin_path.dentry;
+	lower_dir_dentry = dget_parent(lower_dentry);
+
+	lock_rename(lower_dir_dentry, lower_trashbin_dentry);
+
+	if (d_unhashed(lower_dentry) || 
+		lower_dentry->d_parent != lower_dir_dentry) {
+		err = -EINVAL;
+		goto out;
+	}
+	get_datetime(tb_file_name);
+	printk("date: %s\n", tb_file_name);
+	// sprintf(tb_file_name, "%lld-", ktime_get_seconds());
+	strcat(tb_file_name, dentry->d_name.name);
+	qname.name = tb_file_name;
+	qname.len = strlen(tb_file_name);
+	qname.hash = full_name_hash(lower_trashbin_dentry, qname.name, qname.len);
+
+	lower_stbfile_dentry = __lookup_hash(&qname, lower_trashbin_dentry, 0);
+	if (IS_ERR(lower_stbfile_dentry)) {
+		err = PTR_ERR(lower_stbfile_dentry);
+		goto out;
+	} 
+	printk("stbfs: alloc ok..\n");
+
+	printk("stbfs: try to rename..\n");
+	err = vfs_rename(lower_dir_inode, lower_dentry,
+			 d_inode(lower_trashbin_dentry), lower_stbfile_dentry,
+			 NULL, 0);
+	printk("stbfs: rename ok..\n");
+	
+	if (err) {
+		goto out_put_lower_stbfile;
+	}
+
+
+	fsstack_copy_attr_all(trashbin_inode, d_inode(lower_trashbin_dentry));
+	fsstack_copy_inode_size(trashbin_inode, d_inode(lower_trashbin_dentry));
+
+	fsstack_copy_attr_all(dir, d_inode(lower_dir_dentry));
+	fsstack_copy_inode_size(dir, d_inode(lower_dir_dentry));
+
+	set_nlink(d_inode(dentry), 0);
+	d_inode(dentry)->i_ctime = dir->i_ctime;
+	d_drop(dentry); /* this is needed, else LTP fails (VFS won't do it) */
+
+out_put_lower_stbfile:
+	dput(lower_stbfile_dentry);
+out:
+	unlock_rename(lower_dir_dentry, lower_trashbin_dentry);
+	stbfs_put_lower_path(dentry, &lower_path);
+	stbfs_put_lower_path(trashbin_dentry, &lower_trashbin_path);
+	dput(lower_dir_dentry);
+	printk("stbfs: returning from move_to_trashbin\n");
+	return err;
+}
+
 static int stbfs_unlink(struct inode *dir, struct dentry *dentry)
 {
 	int err;
@@ -80,6 +185,22 @@ static int stbfs_unlink(struct inode *dir, struct dentry *dentry)
 	struct inode *lower_dir_inode = stbfs_lower_inode(dir);
 	struct dentry *lower_dir_dentry;
 	struct path lower_path;
+	struct dentry * trashbin = STBFS_SB(dir->i_sb)->trashbin;
+
+	/* if user is unlinking a normal file outside the trashbin,
+	 * We need to move it to the trashbin, else we can delete 
+	 * the file in the trashbin permanently
+	 */
+	if (!d_ancestor(trashbin, dentry)) {
+		printk("stbfs: moving file to trashbin\n");
+		err = stbfs_move_to_trashbin(dir, dentry);
+		goto out_trashbin;
+	}
+
+	if (trashbin == dentry) {
+		err = -EPERM;
+		goto out_trashbin;
+	}
 
 	stbfs_get_lower_path(dentry, &lower_path);
 	lower_dentry = lower_path.dentry;
@@ -114,6 +235,7 @@ out:
 	unlock_dir(lower_dir_dentry);
 	dput(lower_dentry);
 	stbfs_put_lower_path(dentry, &lower_path);
+out_trashbin:
 	return err;
 }
 

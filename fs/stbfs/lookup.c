@@ -192,6 +192,64 @@ int stbfs_interpose(struct dentry *dentry, struct super_block *sb,
 	return PTR_ERR(ret_dentry);
 }
 
+struct dentry * stbfs_alloc_dentry(const char * name, struct dentry * parent, struct dentry * lower_parent)
+{
+	struct qstr this;
+	struct dentry * dentry;
+	struct dentry * lower_dentry;
+	struct path lower_path;
+	struct path root_lower_path;
+	int err = 0;
+	// allocate stbfs dentry
+	this.name = name;
+	this.len = strlen(name);
+	this.hash = full_name_hash(parent, this.name, this.len);
+	stbfs_get_lower_path(parent->d_sb->s_root, &root_lower_path);
+
+	dentry = d_alloc(parent, &this);
+	if (!dentry) {
+		err = -ENOMEM;
+		goto out;
+	}
+	d_set_d_op(dentry, &stbfs_dops);
+	err = stbfs_new_dentry_private_data(dentry);
+	if (err) {
+		goto out_put_dentry;
+	}
+	this.hash = full_name_hash(lower_parent, this.name, this.len);
+	printk("stbfs: d_lookup begin\n");
+	lower_dentry = d_lookup(lower_parent, &this);
+	printk("stbfs: d_lookup end\n");
+	if (lower_dentry)
+		goto setup_lower;
+
+	lower_dentry = d_alloc(lower_parent, &this);
+	printk("stbfs: d_alloc end\n");
+	if (!lower_dentry) {
+		err = -ENOMEM;
+		goto out_free_private;
+	}
+
+	d_add(lower_dentry, NULL); /* instantiate and hash */
+	printk("stbfs: d_add end\n");
+setup_lower:
+	lower_path.dentry = lower_dentry;
+	lower_path.mnt = mntget(root_lower_path.mnt);
+	stbfs_set_lower_path(dentry, &lower_path);
+	goto out; /* good to go */
+
+out_free_private:
+	stbfs_free_dentry_private_data(dentry);
+out_put_dentry:
+	dput(dentry);
+out:
+	stbfs_put_lower_path(parent->d_sb->s_root, &lower_path);
+	if (err) {
+		return ERR_PTR(err);
+	}
+	return dentry;
+}
+
 /*
  * Main driver function for stbfs's lookup.
  *

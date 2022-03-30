@@ -9,78 +9,61 @@
 #include "stbfs.h"
 #include <linux/module.h>
 
-static int create_trashbin(struct path * lower_root_path, struct dentry * root_dentry)
+struct dentry * global_trashbin = NULL;
+
+static int create_trashbin(struct dentry * lower_root_dentry, struct dentry * root_dentry)
 {
 	int err=0;
-	struct vfsmount *lower_root_mnt;
-	struct dentry *lower_root_dentry = NULL;
-	struct dentry *trashbin_dentry = NULL;
+	struct dentry *trashbin_dentry = NULL, *ret_dentry;
 	struct dentry *lower_trashbin_dentry=NULL;
 	struct path lower_path;
 	struct qstr this;
 	struct inode * root_inode = d_inode(root_dentry);
+	struct super_block *sb = root_dentry->d_sb;
 
-	lower_root_dentry = lower_root_path->dentry;
-	lower_root_mnt = lower_root_path->mnt;
-
-	/* Use vfs_path_lookup to check if the dentry exists or not */
-	err = vfs_path_lookup(lower_root_dentry, lower_root_mnt, ".stb", 0,
-			      &lower_path);
-
-	if (!err) {
-		printk(KERN_INFO"stbfs: trashbin alreday exists\n");
-		return 0;
-	}
-		
-	if (err != -ENOENT) {
-		printk(KERN_INFO"stbfs: error when looking up path .stb\n");
-		return err;
-	}
-
-	/* error == -ENOENT, we need to create the trashbin folder */
 	this.name = ".stb";
 	this.len = strlen(this.name);
-	this.hash = full_name_hash(lower_root_dentry, this.name, this.len);
-
-	lower_trashbin_dentry = d_alloc(lower_root_dentry, &this);
-	if (!lower_trashbin_dentry) {
-		err = -ENOMEM;
-		goto out;
-	}
-	d_set_d_op(lower_trashbin_dentry, &stbfs_dops);
-	d_add(lower_trashbin_dentry, NULL); /* instantiate and hash */
-
 	this.hash = full_name_hash(root_dentry, this.name, this.len);
+
+	/* Use stbfs_lookup to check if the dentry exists or not */
+	
 	trashbin_dentry = d_alloc(root_dentry, &this);
 	if (!trashbin_dentry) {
 		err = -ENOMEM;
-		goto out_free_lower_dentry;
+		goto out;
 	}
 
-	err = stbfs_new_dentry_private_data(trashbin_dentry);
-	if (err) {
-		printk(KERN_INFO"stbfs: error in allocating dentry_private_data\n");
-		goto out_free_dentry;
+	ret_dentry  = stbfs_lookup(root_inode, trashbin_dentry, LOOKUP_DIRECTORY);
+	if (IS_ERR(ret_dentry)) {
+		printk("stbfs: error in looking up .stb folder\n");
+		err = PTR_ERR(ret_dentry);
+		dput(trashbin_dentry);
+		goto out;
 	}
-	d_set_d_op(trashbin_dentry , &stbfs_dops);
+	BUG_ON(ret_dentry);
 
+	/* Check if the .stb folder already exists */
+	if (d_inode(trashbin_dentry)) {
+		printk(KERN_INFO"stbfs: trashbin alreday exists, but we are good to go\n");
+		global_trashbin = trashbin_dentry;
+		goto out;
+	}
+
+	stbfs_get_lower_path(trashbin_dentry, &lower_path);
+	lower_trashbin_dentry = lower_path.dentry;
 
 	lower_root_dentry = lock_parent(lower_trashbin_dentry);
 	err = vfs_mkdir(d_inode(lower_root_dentry), lower_trashbin_dentry, 0755);
 	if (err) {
 		printk(KERN_INFO"stbfs: error in creating trashbin folder\n");
-		goto unlock_free;
+		goto out_unlock;
 	}
 	
-	lower_path.dentry = lower_trashbin_dentry;
-	lower_path.mnt = mntget(lower_root_mnt);
-	stbfs_set_lower_path(trashbin_dentry, &lower_path);
-	
 	/* interpose */
-	err = stbfs_interpose(trashbin_dentry, root_dentry->d_sb, &lower_path);
+	err = stbfs_interpose(trashbin_dentry, sb, &lower_path);
 	if (err) {
 		printk(KERN_INFO"stbfs: error in interpose\n");
-		goto unlock_free;
+		goto out_unlock;
 	}
 	fsstack_copy_attr_times(root_inode, stbfs_lower_inode(root_inode));
 	fsstack_copy_inode_size(root_inode, d_inode(lower_root_dentry));
@@ -89,21 +72,18 @@ static int create_trashbin(struct path * lower_root_path, struct dentry * root_d
 
 	printk(KERN_INFO"stbfs: trashbin created\n");
 	
-	/* successful */
-	unlock_dir(lower_root_dentry);
-	goto out;
+	/* successful, cache the dentry of .stb */
+	global_trashbin = dget(trashbin_dentry);
 
-
-unlock_free:
+out_unlock:
 	unlock_dir(lower_root_dentry);
-out_free_dentry:
-	stbfs_free_dentry_private_data(trashbin_dentry);
-	dput(trashbin_dentry);
-out_free_lower_dentry:
-	dput(lower_trashbin_dentry);
+	stbfs_put_lower_path(trashbin_dentry, &lower_path);
+	if (err) {
+		stbfs_put_lower_path(trashbin_dentry, &lower_path);
+		stbfs_free_dentry_private_data(trashbin_dentry);
+	}
 out:
 	return err;
-
 }
 
 
@@ -198,7 +178,7 @@ static int stbfs_read_super(struct super_block *sb, void *raw_data, int silent)
 		       dev_name, lower_sb->s_type->name);
 	
 	/* create a transhbin */
-	if (create_trashbin(&lower_path, sb->s_root)) {
+	if (create_trashbin(lower_path.dentry, sb->s_root)) {
 		printk("stbfs: failed to create trashbin\n");
 	}
 	goto out; /* all is well */

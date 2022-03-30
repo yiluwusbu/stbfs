@@ -24,7 +24,8 @@
 #include <linux/sched.h>
 #include <linux/xattr.h>
 #include <linux/exportfs.h>
-
+#include <linux/kernel.h>
+#include <linux/time.h>
 /* the file system name */
 #define STBFS_NAME "stbfs"
 
@@ -46,6 +47,7 @@ extern const struct address_space_operations stbfs_aops, stbfs_dummy_aops;
 extern const struct vm_operations_struct stbfs_vm_ops;
 extern const struct export_operations stbfs_export_ops;
 extern const struct xattr_handler *stbfs_xattr_handlers[];
+extern struct dentry * global_trashbin; 
 
 extern int stbfs_init_inode_cache(void);
 extern void stbfs_destroy_inode_cache(void);
@@ -59,6 +61,8 @@ extern struct inode *stbfs_iget(struct super_block *sb,
 				 struct inode *lower_inode);
 extern int stbfs_interpose(struct dentry *dentry, struct super_block *sb,
 			    struct path *lower_path);
+extern struct dentry * stbfs_alloc_dentry(const char * name, 
+				struct dentry * parent, struct dentry * lower_parent);
 
 /* file private data */
 struct stbfs_file_info {
@@ -81,6 +85,7 @@ struct stbfs_dentry_info {
 /* stbfs super-block data in memory */
 struct stbfs_sb_info {
 	struct super_block *lower_sb;
+	struct dentry *trashbin;
 };
 
 /*
@@ -201,5 +206,14 @@ static inline void unlock_dir(struct dentry *dir)
 {
 	inode_unlock(d_inode(dir));
 	dput(dir);
+}
+
+/* time to string helper */
+static inline void get_datetime(char * str)
+{
+	time64_t sec = ktime_get_real_seconds();
+	struct tm tm;
+	time64_to_tm(sec, 0, &tm);
+	sprintf(str, "%ld-%d-%d-%d-%d-%d-", 1900+tm.tm_year, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 }
 #endif	/* not _STBFS_H_ */
