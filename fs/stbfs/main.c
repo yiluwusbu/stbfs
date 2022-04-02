@@ -9,7 +9,6 @@
 #include "stbfs.h"
 #include <linux/module.h>
 
-struct dentry * global_trashbin = NULL;
 
 static int create_trashbin(struct dentry * lower_root_dentry, struct dentry * root_dentry)
 {
@@ -37,34 +36,37 @@ static int create_trashbin(struct dentry * lower_root_dentry, struct dentry * ro
 	if (IS_ERR(ret_dentry)) {
 		printk("stbfs: error in looking up .stb folder\n");
 		err = PTR_ERR(ret_dentry);
-		dput(trashbin_dentry);
 		goto out;
 	}
+	
 	BUG_ON(ret_dentry);
+	stbfs_get_lower_path(trashbin_dentry, &lower_path);
 
 	/* Check if the .stb folder already exists */
 	if (d_inode(trashbin_dentry)) {
 		printk(KERN_INFO"stbfs: trashbin alreday exists, but we are good to go\n");
-		global_trashbin = trashbin_dentry;
+		stbfs_set_lower_trashbin(sb, &lower_path);
+		stbfs_put_lower_path(trashbin_dentry, &lower_path);
 		goto out;
 	}
 
-	stbfs_get_lower_path(trashbin_dentry, &lower_path);
 	lower_trashbin_dentry = lower_path.dentry;
-
 	lower_root_dentry = lock_parent(lower_trashbin_dentry);
-	err = vfs_mkdir(d_inode(lower_root_dentry), lower_trashbin_dentry, 0755);
+
+	current->fs->umask = 0;
+	err = vfs_mkdir(d_inode(lower_root_dentry), lower_trashbin_dentry, 00777);
+	current->fs->umask = 022;
 	if (err) {
 		printk(KERN_INFO"stbfs: error in creating trashbin folder\n");
 		goto out_unlock;
 	}
 	
-	/* interpose */
-	err = stbfs_interpose(trashbin_dentry, sb, &lower_path);
-	if (err) {
-		printk(KERN_INFO"stbfs: error in interpose\n");
-		goto out_unlock;
-	}
+	// /* interpose */
+	// err = stbfs_interpose(trashbin_dentry, sb, &lower_path);
+	// if (err) {
+	// 	printk(KERN_INFO"stbfs: error in interpose\n");
+	// 	goto out_unlock;
+	// }
 	fsstack_copy_attr_times(root_inode, stbfs_lower_inode(root_inode));
 	fsstack_copy_inode_size(root_inode, d_inode(lower_root_dentry));
 	/* update number of links on parent directory */
@@ -72,17 +74,19 @@ static int create_trashbin(struct dentry * lower_root_dentry, struct dentry * ro
 
 	printk(KERN_INFO"stbfs: trashbin created\n");
 	
-	/* successful, cache the dentry of .stb */
-	global_trashbin = dget(trashbin_dentry);
+	/* successful, cache the path of lower .stb */
+	stbfs_set_lower_trashbin(sb, &lower_path);
 
 out_unlock:
 	unlock_dir(lower_root_dentry);
 	stbfs_put_lower_path(trashbin_dentry, &lower_path);
-	if (err) {
-		stbfs_put_lower_path(trashbin_dentry, &lower_path);
-		stbfs_free_dentry_private_data(trashbin_dentry);
-	}
 out:
+	/* release the lower dentry if an err is encountered is not needed */
+	// if (err) {
+	// 	stbfs_put_lower_path(trashbin_dentry, &lower_path);
+	// 	stbfs_free_dentry_private_data(trashbin_dentry);
+	// }
+	dput(trashbin_dentry);
 	return err;
 }
 
@@ -209,11 +213,17 @@ struct dentry *stbfs_mount(struct file_system_type *fs_type, int flags,
 			   stbfs_read_super);
 }
 
+void stbfs_shutdown_super(struct super_block *sb)
+{
+	stbfs_put_lower_trashbin(sb);
+	generic_shutdown_super(sb);
+}
+
 static struct file_system_type stbfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= STBFS_NAME,
 	.mount		= stbfs_mount,
-	.kill_sb	= generic_shutdown_super,
+	.kill_sb	= stbfs_shutdown_super,
 	.fs_flags	= 0,
 };
 MODULE_ALIAS_FS(STBFS_NAME);

@@ -46,11 +46,142 @@ static ssize_t stbfs_write(struct file *file, const char __user *buf,
 	return err;
 }
 
+// struct linux_dirent {
+// 	unsigned long	d_ino;
+// 	unsigned long	d_off;
+// 	unsigned short	d_reclen;
+// 	char		d_name[1];
+// };
+
+struct getdents_callback64 {
+	struct dir_context ctx;
+	struct linux_dirent64 __user * current_dir;
+	struct linux_dirent64 __user * previous;
+	int count;
+	int error;
+};
+
+
+static kuid_t get_stbfile_userid(const char * filename)
+{
+	int len = strlen(filename);
+	const char * loc = &filename[len-1];
+	int uid = 0, cnt=0;
+	int factor = 1;
+	int digit;
+	char c;
+
+	while (cnt < len && (c = *loc) != '_') {
+		if (c < '0' || c > '9') {
+			return KUIDT_INIT(0);
+		}
+		digit = c - '0';
+		uid += digit * factor;
+		factor *= 10;
+		cnt++;
+		loc--;
+	}
+
+	return KUIDT_INIT(uid);
+}
+
+static int stbfs_read_trashbin_dir(struct file *file, struct dir_context *ctx)
+{
+	int err;
+	struct file *lower_file = NULL;
+	struct dentry *dentry = file->f_path.dentry;
+	struct linux_dirent64 * k_dirent;
+	struct linux_dirent64 __user * dirent;
+	int buflen;
+	const struct cred * cred;
+	kuid_t euid, owner_uid;
+	kuid_t root_uid = KUIDT_INIT(0);
+	// int n = 0;
+	int consumed = 0;
+	mm_segment_t old_fs;
+
+	struct getdents_callback64 *buf =
+		container_of(ctx, struct getdents_callback64, ctx);
+
+	dirent = buf->current_dir;
+	buflen = buf->count;
+
+	k_dirent = kzalloc(buflen, GFP_KERNEL);
+	if (!k_dirent) {
+		return -ENOMEM;
+	}
+
+	buf->current_dir = k_dirent;
+
+	lower_file = stbfs_lower_file(file);
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	err = iterate_dir(lower_file, ctx);
+	set_fs(old_fs);
+	file->f_pos = lower_file->f_pos;
+	// copy_to_user(dirent, k_dirent, buflen);
+	// buf->previous = buf->previous ? ((void*)dirent + ((void*)(buf->previous) - (void*)k_dirent)) : NULL;
+
+	if (err >= 0) {		/* copy the atime */
+		fsstack_copy_attr_atime(d_inode(dentry),
+					file_inode(lower_file));
+	} else {
+		buf->previous = buf->previous ? ((void*)dirent + ((void*)(buf->previous) - (void*)k_dirent)) : NULL;
+		if (copy_to_user(dirent, k_dirent, buflen)) {
+			err = -EFAULT;
+		}
+		return err;
+	}
+
+	cred = get_current_cred();
+	euid = cred->euid;
+	buflen = buflen - buf->count;
+	buf->previous = NULL;
+
+	while (consumed < buflen) {
+		if (strcmp(k_dirent->d_name, "..") == 0  
+			|| strcmp(k_dirent->d_name, ".") == 0 ) {
+			goto do_copy;
+		} 
+
+		owner_uid = get_stbfile_userid(k_dirent->d_name);
+		if (uid_eq(root_uid, euid) || uid_eq(owner_uid, euid)) {
+			goto do_copy;
+		} else {
+			buf->count += k_dirent->d_reclen;
+			goto advance;
+		}
+		
+do_copy:
+		if (copy_to_user(dirent, k_dirent, k_dirent->d_reclen)) {
+			err = -EFAULT;
+			printk("stbfs: copy_to_user error\n");
+			goto out;
+		}
+		dirent = (struct linux_dirent64 __user *)((void*)dirent + k_dirent->d_reclen);
+		buf->previous = dirent;
+advance:
+		consumed += k_dirent->d_reclen;
+		k_dirent = (struct linux_dirent64*)((void*)k_dirent + k_dirent->d_reclen);
+	}
+
+	err = buf->count;
+
+out:
+	put_cred(cred);
+	return err;
+}
+
+
 static int stbfs_readdir(struct file *file, struct dir_context *ctx)
 {
 	int err;
 	struct file *lower_file = NULL;
 	struct dentry *dentry = file->f_path.dentry;
+
+	if (stbfs_is_trashbin(dentry)) {
+		return stbfs_read_trashbin_dir(file, ctx);
+	}
 
 	lower_file = stbfs_lower_file(file);
 	err = iterate_dir(lower_file, ctx);
@@ -61,11 +192,121 @@ static int stbfs_readdir(struct file *file, struct dir_context *ctx)
 	return err;
 }
 
+/* filename format YY-MM-DD-HH-MM-SS-<filename>_user_<userid> */
+static void stbfs_extract_old_filename(const char * fname, char * oldname)
+{
+	const char * loc = fname;
+	int namelen = strlen(fname);
+	int dashcnt = 0, cnt = 0; 
+	char * name_on_fail = "invalid_old_name";
+	int old_name_len = 0;
+	int len_before;
+	while (cnt < namelen && dashcnt < 6) {
+		if (*loc == '-') {
+			dashcnt++;
+		}
+		loc++; 
+		cnt++;
+	}
+	if (cnt == namelen) {
+		goto fail;
+	}
+	len_before = cnt;
+	loc = &fname[namelen-1];
+	cnt = 0;
+	while (cnt < namelen && *loc != '_') {
+		cnt++;
+		loc--;
+	}
+	if (cnt == namelen) {
+		goto fail;
+	}
+
+	old_name_len = namelen - len_before - strlen("_user_") - cnt;
+	if (old_name_len <= 0) {
+		goto fail;
+	}
+
+	loc = (char*)fname + len_before;
+	memcpy(oldname, loc, old_name_len); 
+	oldname[old_name_len] = 0;
+	return;
+fail:
+	printk("stbfs: illegal file name in .stb detected\n");
+	strcpy(oldname, name_on_fail);
+	return;
+
+}
+
+static long stbfs_undelete_file(struct file *file)
+{
+	struct dentry * dentry = file->f_path.dentry;
+	struct dentry * new_dentry, * old_dir_dentry;
+	struct inode * inode = d_inode(dentry);
+	struct path pwd;
+	struct inode *old_dir, *new_dir;
+	const struct cred * cred;
+	long err = 0;
+	kuid_t root = KUIDT_INIT(0);
+	char oldname[MAX_DENTRY_NAME_LEN];
+	struct qstr qname;
+	printk("stbfs: undeleting...\n");
+	if (!inode) {
+		printk("stbfs: inode for file is empty\n");
+		return -EINVAL;
+	}
+	/* permission check */
+	cred = get_current_cred();
+	if (!(uid_eq(cred->euid, root) || uid_eq(cred->euid, inode->i_uid))) {
+		err = -EPERM;
+		goto out1;
+	}
+	get_fs_pwd(current->fs, &pwd);
+	new_dir = d_inode(pwd.dentry);
+	old_dir_dentry = dget_parent(dentry);
+	old_dir = d_inode(old_dir_dentry);
+	stbfs_extract_old_filename(dentry->d_name.name, oldname);
+	printk("stbfs: oldname is %s\n", oldname);
+	/* setup qname */
+	qname.name = oldname;
+	qname.len = strlen(oldname);
+	qname.hash = full_name_hash(pwd.dentry, qname.name, qname.len);
+	new_dentry = __lookup_hash(&qname, pwd.dentry, 0);
+	
+	if (IS_ERR(new_dentry)) {
+		printk("stbfs: error in looking up the new dentry in CWD\n");
+		goto out2;
+	}
+	
+	err = __stbfs_rename(old_dir, dentry, new_dir, new_dentry, 0);
+
+	if (err) {
+		printk("stbfs: error in renaming the undeleted file\n");
+		goto out3;
+	}
+out3:
+	dput(new_dentry);
+out2:
+	path_put(&pwd);
+	dput(old_dir_dentry);
+out1:
+	put_cred(cred);
+
+	return err;
+
+}
+
 static long stbfs_unlocked_ioctl(struct file *file, unsigned int cmd,
 				  unsigned long arg)
 {
 	long err = -ENOTTY;
 	struct file *lower_file;
+
+	/* can only undelete a file in the trashbin */
+	if (cmd == IOCTL_CMD_UNDELETE && stbfs_in_trashbin(file->f_path.dentry)) {
+		return stbfs_undelete_file(file);
+	}
+	printk("stbfs: cmd = %d, dentry = %s\n", cmd, file->f_path.dentry->d_name.name);
 
 	lower_file = stbfs_lower_file(file);
 

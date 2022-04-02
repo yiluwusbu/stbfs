@@ -74,7 +74,7 @@ out:
 	return err;
 }
 
-static struct dentry *__lookup_hash(const struct qstr *name,
+struct dentry *__lookup_hash(const struct qstr *name,
 		struct dentry *base, unsigned int flags)
 {
 	struct dentry *dentry = d_lookup(base, name);
@@ -100,6 +100,17 @@ static struct dentry *__lookup_hash(const struct qstr *name,
 	return dentry;
 }
 
+static void generate_stbfile_name(char * str, const char * file_name, kuid_t kuid)
+{
+	char userid[32];
+	get_datetime(str);
+	printk("date: %s\n", str);
+	sprintf(userid, "_user_%d", __kuid_val(kuid));
+	// sprintf(tb_file_name, "%lld-", ktime_get_seconds());
+	strcat(str, file_name);
+	strcat(str, userid);
+}
+
 
 static int stbfs_move_to_trashbin(struct inode *dir, struct dentry *dentry)
 {
@@ -108,15 +119,17 @@ static int stbfs_move_to_trashbin(struct inode *dir, struct dentry *dentry)
 	struct dentry *lower_stbfile_dentry;
 	struct inode *lower_dir_inode = stbfs_lower_inode(dir);
 	struct dentry *lower_dir_dentry, *lower_trashbin_dentry;
-	struct dentry *trashbin_dentry = global_trashbin;
-	struct inode *trashbin_inode = d_inode(trashbin_dentry);
+	struct dentry *trashbin_dentry;
+	struct inode *trashbin_inode;
 	struct path lower_path, lower_trashbin_path;
 	struct qstr qname;
 	char tb_file_name[256];
 
-	if (dentry == trashbin_dentry) {
-		return -EPERM;
+	trashbin_dentry = stbfs_get_trashbin_dentry(dentry->d_sb);
+	if (IS_ERR(trashbin_dentry)) {
+		return PTR_ERR(trashbin_dentry);
 	}
+	trashbin_inode = d_inode(trashbin_dentry);
 
 	stbfs_get_lower_path(dentry, &lower_path);
 	stbfs_get_lower_path(trashbin_dentry, &lower_trashbin_path);
@@ -131,10 +144,9 @@ static int stbfs_move_to_trashbin(struct inode *dir, struct dentry *dentry)
 		err = -EINVAL;
 		goto out;
 	}
-	get_datetime(tb_file_name);
-	printk("date: %s\n", tb_file_name);
-	// sprintf(tb_file_name, "%lld-", ktime_get_seconds());
-	strcat(tb_file_name, dentry->d_name.name);
+
+	generate_stbfile_name(tb_file_name, dentry->d_name.name, d_inode(dentry)->i_uid);
+	
 	qname.name = tb_file_name;
 	qname.len = strlen(tb_file_name);
 	qname.hash = full_name_hash(lower_trashbin_dentry, qname.name, qname.len);
@@ -144,13 +156,16 @@ static int stbfs_move_to_trashbin(struct inode *dir, struct dentry *dentry)
 		err = PTR_ERR(lower_stbfile_dentry);
 		goto out;
 	} 
-	printk("stbfs: alloc ok..\n");
 
-	printk("stbfs: try to rename..\n");
 	err = vfs_rename(lower_dir_inode, lower_dentry,
 			 d_inode(lower_trashbin_dentry), lower_stbfile_dentry,
 			 NULL, 0);
-	printk("stbfs: rename ok..\n");
+
+	// revert_creds(old_cred);
+	
+	if (err < 0) {
+		printk("stbfs: rename failed with errcode %d\n",err);
+	}
 	
 	if (err) {
 		goto out_put_lower_stbfile;
@@ -174,7 +189,7 @@ out:
 	stbfs_put_lower_path(dentry, &lower_path);
 	stbfs_put_lower_path(trashbin_dentry, &lower_trashbin_path);
 	dput(lower_dir_dentry);
-	printk("stbfs: returning from move_to_trashbin\n");
+	dput(trashbin_dentry);
 	return err;
 }
 
@@ -185,22 +200,28 @@ static int stbfs_unlink(struct inode *dir, struct dentry *dentry)
 	struct inode *lower_dir_inode = stbfs_lower_inode(dir);
 	struct dentry *lower_dir_dentry;
 	struct path lower_path;
-	struct dentry * trashbin = STBFS_SB(dir->i_sb)->trashbin;
+	struct dentry * trashbin = stbfs_get_trashbin_dentry(dentry->d_sb);
 
+	if (IS_ERR(trashbin)) {
+		err = PTR_ERR(trashbin);
+		return err;
+	}
+	/* unlinking the trashbin is forbiddened */
+	if (stbfs_is_trashbin(dentry)) {
+		err = -EPERM;
+		goto out_trashbin;
+	}
+	
 	/* if user is unlinking a normal file outside the trashbin,
 	 * We need to move it to the trashbin, else we can delete 
 	 * the file in the trashbin permanently
 	 */
-	if (!d_ancestor(trashbin, dentry)) {
+	if (!stbfs_in_trashbin(dentry)) {
 		printk("stbfs: moving file to trashbin\n");
 		err = stbfs_move_to_trashbin(dir, dentry);
 		goto out_trashbin;
 	}
 
-	if (trashbin == dentry) {
-		err = -EPERM;
-		goto out_trashbin;
-	}
 
 	stbfs_get_lower_path(dentry, &lower_path);
 	lower_dentry = lower_path.dentry;
@@ -236,6 +257,7 @@ out:
 	dput(lower_dentry);
 	stbfs_put_lower_path(dentry, &lower_path);
 out_trashbin:
+	dput(trashbin);
 	return err;
 }
 
@@ -361,7 +383,7 @@ out:
  * The locking rules in stbfs_rename are complex.  We could use a simpler
  * superblock-level name-space lock for renames and copy-ups.
  */
-static int stbfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+int __stbfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 			 struct inode *new_dir, struct dentry *new_dentry,
 			 unsigned int flags)
 {
@@ -426,6 +448,13 @@ out:
 	return err;
 }
 
+static int stbfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+			 struct inode *new_dir, struct dentry *new_dentry,
+			 unsigned int flags)
+{
+	return __stbfs_rename(old_dir, old_dentry, new_dir, new_dentry, flags);
+}
+
 static const char *stbfs_get_link(struct dentry *dentry, struct inode *inode,
 				   struct delayed_call *done)
 {
@@ -473,9 +502,14 @@ out:
 static int stbfs_permission(struct inode *inode, int mask)
 {
 	struct inode *lower_inode;
+	struct inode * lower_trashbin_inode;
 	int err;
-
+	lower_trashbin_inode = d_inode(STBFS_SB(inode->i_sb)->lower_trashbin.dentry);
 	lower_inode = stbfs_lower_inode(inode);
+	if (lower_trashbin_inode == lower_inode && mask & MAY_WRITE) {
+		printk("stbfs: trying to write .stb folder. access denied\n");
+		return -EPERM;
+	}
 	err = inode_permission(lower_inode, mask);
 	return err;
 }
@@ -488,6 +522,12 @@ static int stbfs_setattr(struct dentry *dentry, struct iattr *ia)
 	struct inode *lower_inode;
 	struct path lower_path;
 	struct iattr lower_ia;
+
+	/* No user should be allowed to change attribute of a file in .stb */
+	if (stbfs_in_trashbin(dentry)) {
+		printk("stbfs: user try to change attributes of a file in .stb. Access denied\n");
+		return -EPERM;
+	}
 
 	inode = d_inode(dentry);
 

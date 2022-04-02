@@ -135,6 +135,27 @@ struct inode *stbfs_iget(struct super_block *sb, struct inode *lower_inode)
 	return inode;
 }
 
+
+int cred_check(struct inode * lower_inode, struct dentry *dentry)
+{
+	kuid_t euid;
+	const struct cred * cred = get_current_cred();
+	int err = 0;
+
+	euid = cred->euid;
+
+	if (stbfs_in_trashbin(dentry)) {
+		if (!uid_eq(euid,  KUIDT_INIT(0)) && !uid_eq(euid, lower_inode->i_uid)) {
+			err = -ENOENT;
+			goto out;
+		}
+	}
+out:
+	put_cred(cred);
+	return err;
+}
+
+
 /*
  * Helper interpose routine, called directly by ->lookup to handle
  * spliced dentries.
@@ -250,6 +271,7 @@ out:
 	return dentry;
 }
 
+
 /*
  * Main driver function for stbfs's lookup.
  *
@@ -268,6 +290,7 @@ static struct dentry *__stbfs_lookup(struct dentry *dentry,
 	struct path lower_path;
 	struct qstr this;
 	struct dentry *ret_dentry = NULL;
+
 
 	/* must initialize dentry operations */
 	d_set_d_op(dentry, &stbfs_dops);
@@ -288,6 +311,12 @@ static struct dentry *__stbfs_lookup(struct dentry *dentry,
 	/* no error: handle positive dentries */
 	if (!err) {
 		stbfs_set_lower_path(dentry, &lower_path);
+
+		err = cred_check(d_inode(lower_path.dentry), dentry);
+		if (err) {
+			stbfs_put_reset_lower_path(dentry);
+			goto out;
+		}
 		ret_dentry =
 			__stbfs_interpose(dentry, dentry->d_sb, &lower_path);
 		if (IS_ERR(ret_dentry)) {
@@ -373,3 +402,31 @@ out:
 	dput(parent);
 	return ret;
 }
+
+__must_check struct dentry * stbfs_get_trashbin_dentry(struct super_block * sb)
+{
+	struct dentry * trashbin, * ret_dentry;
+	struct qstr qname = {.name=".stb", .len=strlen(".stb")};
+	qname.hash = full_name_hash(sb->s_root, qname.name, qname.len);
+	trashbin = d_alloc(sb->s_root, &qname);
+	if (!trashbin) {
+		return ERR_PTR(-ENOMEM);
+	}
+	ret_dentry = stbfs_lookup(d_inode(sb->s_root), trashbin, LOOKUP_DIRECTORY);
+	if (IS_ERR(ret_dentry)) {
+		printk("stbfs: error looking up .stb dentry, errcode = %ld\n", PTR_ERR(ret_dentry));
+		goto out_put;
+	} 
+	if (unlikely(ret_dentry)) {
+		goto out_put;
+	}
+	/* NULL means OK */
+	ret_dentry = trashbin;
+	goto out;
+out_put:
+	dput(trashbin);
+out:
+	return ret_dentry;
+
+}
+

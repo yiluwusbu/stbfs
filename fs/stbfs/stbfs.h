@@ -26,6 +26,9 @@
 #include <linux/exportfs.h>
 #include <linux/kernel.h>
 #include <linux/time.h>
+#include <linux/cred.h>
+#include <linux/dirent.h>
+#include <linux/fs_struct.h>
 /* the file system name */
 #define STBFS_NAME "stbfs"
 
@@ -34,6 +37,10 @@
 
 /* useful for tracking code reachability */
 #define UDBG printk(KERN_DEFAULT "DBG:%s:%s:%d\n", __FILE__, __func__, __LINE__)
+
+/* undelete cmd for ioctl */
+#define IOCTL_CMD_UNDELETE 0x7C
+#define MAX_DENTRY_NAME_LEN 256
 
 /* operations vectors defined in specific files */
 extern const struct file_operations stbfs_main_fops;
@@ -47,8 +54,9 @@ extern const struct address_space_operations stbfs_aops, stbfs_dummy_aops;
 extern const struct vm_operations_struct stbfs_vm_ops;
 extern const struct export_operations stbfs_export_ops;
 extern const struct xattr_handler *stbfs_xattr_handlers[];
-extern struct dentry * global_trashbin; 
 
+
+extern struct dentry * stbfs_get_trashbin_dentry(struct super_block * sb);
 extern int stbfs_init_inode_cache(void);
 extern void stbfs_destroy_inode_cache(void);
 extern int stbfs_init_dentry_cache(void);
@@ -63,6 +71,10 @@ extern int stbfs_interpose(struct dentry *dentry, struct super_block *sb,
 			    struct path *lower_path);
 extern struct dentry * stbfs_alloc_dentry(const char * name, 
 				struct dentry * parent, struct dentry * lower_parent);
+extern struct dentry *__lookup_hash(const struct qstr *name,
+		struct dentry *base, unsigned int flags);
+extern int __stbfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+			 struct inode *new_dir, struct dentry *new_dentry, unsigned int flags);
 
 /* file private data */
 struct stbfs_file_info {
@@ -85,7 +97,7 @@ struct stbfs_dentry_info {
 /* stbfs super-block data in memory */
 struct stbfs_sb_info {
 	struct super_block *lower_sb;
-	struct dentry *trashbin;
+	struct path lower_trashbin;
 };
 
 /*
@@ -143,6 +155,7 @@ static inline void stbfs_set_lower_super(struct super_block *sb,
 {
 	STBFS_SB(sb)->lower_sb = val;
 }
+
 
 /* path based (dentry/mnt) macros */
 static inline void pathcpy(struct path *dst, const struct path *src)
@@ -216,4 +229,34 @@ static inline void get_datetime(char * str)
 	time64_to_tm(sec, 0, &tm);
 	sprintf(str, "%ld-%d-%d-%d-%d-%d-", 1900+tm.tm_year, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 }
+
+static inline bool stbfs_is_trashbin(struct dentry * dentry)
+{
+	return STBFS_SB(dentry->d_sb)->lower_trashbin.dentry
+		   == STBFS_D(dentry)->lower_path.dentry;
+}
+
+static inline bool stbfs_in_trashbin(struct dentry * dentry)
+{
+	struct dentry * lower_trashbin = 
+		STBFS_SB(dentry->d_sb)->lower_trashbin.dentry;
+	struct dentry *lower_dentry = 
+		STBFS_D(dentry)->lower_path.dentry;
+	return lower_dentry->d_parent == lower_trashbin;
+}
+
+static inline void stbfs_set_lower_trashbin(struct super_block *sb,
+					  struct path *val)
+{
+	pathcpy(&(STBFS_SB(sb)->lower_trashbin), val);
+	path_get(val);
+}
+
+static inline void stbfs_put_lower_trashbin(struct super_block *sb)
+{
+	path_put(&(STBFS_SB(sb)->lower_trashbin));
+	STBFS_SB(sb)->lower_trashbin.dentry = NULL;
+	STBFS_SB(sb)->lower_trashbin.mnt = NULL;
+}
+
 #endif	/* not _STBFS_H_ */
