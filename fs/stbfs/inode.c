@@ -17,6 +17,10 @@ static int stbfs_create(struct inode *dir, struct dentry *dentry,
 	struct dentry *lower_parent_dentry = NULL;
 	struct path lower_path;
 
+	if (stbfs_in_trashbin(dentry)) {
+		return -EPERM;
+	}
+
 	stbfs_get_lower_path(dentry, &lower_path);
 	lower_dentry = lower_path.dentry;
 	lower_parent_dentry = lock_parent(lower_dentry);
@@ -100,104 +104,143 @@ struct dentry *__lookup_hash(const struct qstr *name,
 	return dentry;
 }
 
-static void generate_stbfile_name(char * str, const char * file_name, kuid_t kuid)
+static void generate_stbfile_name(char * str, const char * file_name, kuid_t kuid, bool is_enc)
 {
 	char userid[32];
 	get_datetime(str);
 	printk("date: %s\n", str);
-	sprintf(userid, "_user_%d", __kuid_val(kuid));
+	if (is_enc) {
+		sprintf(userid, "_user_%d.enc", __kuid_val(kuid));
+	} else {
+		sprintf(userid, "_user_%d", __kuid_val(kuid));
+	}
 	// sprintf(tb_file_name, "%lld-", ktime_get_seconds());
 	strcat(str, file_name);
 	strcat(str, userid);
 }
 
 
-static int stbfs_move_to_trashbin(struct inode *dir, struct dentry *dentry)
+
+void prepare_cryptocpy_arg(struct cryptocopy_params * p, struct file * src, struct file * dst, int flag)
 {
-	int err = 0;
-	struct dentry *lower_dentry;
+	struct user_aes_key * key;
+	key = stbfs_get_user_key(current_cred()->uid);
+	if (!key) {
+		key = stbfs_get_user_key(KUIDT_INIT(0));
+	}
+	p->in_filp = src;
+	p->out_filp = dst;
+	p->alg_name = "ctr-aes-aesni";
+	p->keybuf = key ? key->key : NULL;
+	p->key_len =  key ? key->keylen : 0;
+	p->flags = key ? flag : COPY_FLAG;
+}
+
+/* returns the lower dentry of created file in trashbin if successful */ 
+static struct dentry * __stbfs_move_to_trashbin(struct inode *dir, struct dentry *dentry)
+{
+	int err = 0, err2;
 	struct dentry *lower_stbfile_dentry;
-	struct inode *lower_dir_inode = stbfs_lower_inode(dir);
-	struct dentry *lower_dir_dentry, *lower_trashbin_dentry;
+	struct dentry *lower_trashbin_dentry;
 	struct dentry *trashbin_dentry;
-	struct inode *trashbin_inode;
-	struct path lower_path, lower_trashbin_path;
+	struct inode *trashbin_inode, *lower_trashbin_inode;
+	struct path lower_path, lower_trashbin_path, lower_stbfile_path;
 	struct qstr qname;
-	char tb_file_name[256];
+	struct cryptocopy_params cparams;
+	struct file * in_filp=NULL, *out_filp=NULL;
+	char tb_file_name[MAX_DENTRY_NAME_LEN];
 
 	trashbin_dentry = stbfs_get_trashbin_dentry(dentry->d_sb);
 	if (IS_ERR(trashbin_dentry)) {
-		return PTR_ERR(trashbin_dentry);
+		return trashbin_dentry;
 	}
-	trashbin_inode = d_inode(trashbin_dentry);
 
 	stbfs_get_lower_path(dentry, &lower_path);
 	stbfs_get_lower_path(trashbin_dentry, &lower_trashbin_path);
-	lower_dentry = lower_path.dentry;
+	trashbin_inode = d_inode(trashbin_dentry);
 	lower_trashbin_dentry = lower_trashbin_path.dentry;
-	lower_dir_dentry = dget_parent(lower_dentry);
-
-	lock_rename(lower_dir_dentry, lower_trashbin_dentry);
-
-	if (d_unhashed(lower_dentry) || 
-		lower_dentry->d_parent != lower_dir_dentry) {
-		err = -EINVAL;
-		goto out;
-	}
-
-	generate_stbfile_name(tb_file_name, dentry->d_name.name, d_inode(dentry)->i_uid);
+	lower_trashbin_inode = d_inode(lower_trashbin_dentry);
 	
+	generate_stbfile_name(tb_file_name, dentry->d_name.name, d_inode(dentry)->i_uid, true);
 	qname.name = tb_file_name;
 	qname.len = strlen(tb_file_name);
 	qname.hash = full_name_hash(lower_trashbin_dentry, qname.name, qname.len);
 
+	/* lock the trashbin directory before lookup & create */
+	inode_lock(lower_trashbin_inode);
+	/* Normally, this should return a negative dentry */
 	lower_stbfile_dentry = __lookup_hash(&qname, lower_trashbin_dentry, 0);
-	if (IS_ERR(lower_stbfile_dentry)) {
-		err = PTR_ERR(lower_stbfile_dentry);
-		goto out;
-	} 
+	lower_stbfile_path.mnt = mntget(lower_trashbin_path.mnt);
+	lower_stbfile_path.dentry = dget(lower_stbfile_dentry);
 
-	err = vfs_rename(lower_dir_inode, lower_dentry,
-			 d_inode(lower_trashbin_dentry), lower_stbfile_dentry,
-			 NULL, 0);
-
-	// revert_creds(old_cred);
-	
-	if (err < 0) {
-		printk("stbfs: rename failed with errcode %d\n",err);
+	/* open the file to be moved to trashbin */
+	in_filp = dentry_open(&lower_path, O_RDONLY, current_cred());
+	if (IS_ERR(in_filp)) {
+		printk("stbfs: failed to open the file to be deleted\n");
+		err = PTR_ERR(in_filp);
+		goto exit1;
 	}
-	
+	/* create/open a new file in the trashbin, err out if exists */
+	if (d_inode(lower_stbfile_dentry)) {
+		err = -EEXIST;
+		goto exit1;
+	}
+	err = vfs_create(lower_trashbin_inode, lower_stbfile_dentry, in_filp->f_inode->i_mode, false);
 	if (err) {
-		goto out_put_lower_stbfile;
+		printk("stbfs: failed to create a new file in the trashbin\n");
+		goto exit1;
 	}
 
+	out_filp = dentry_open(&lower_stbfile_path, O_RDWR, current_cred());
+	if (IS_ERR(out_filp)) {
+		printk("stbfs: failed to open a new file in .stb folder\n");
+		err = PTR_ERR(out_filp);
+		goto exit1;
+	}
+	prepare_cryptocpy_arg(&cparams, in_filp, out_filp, ENCRYPT_FLAG);
+	
+	err = stbfs_cryptocopy(&cparams);
 
+	if (err) {
+		printk("stbfs: cryptocopy failed with error code %d\n", err);
+		/* delete partial output on failure */
+		err2 = vfs_unlink(lower_trashbin_inode, lower_stbfile_dentry, NULL);
+		if (err2) {
+			err = err2;
+			printk(KERN_CRIT"stbfs: unable to unlink partial output in .stb folder on failure\n");
+		}
+	}
+
+	/* we are good here, need to update trashbin inode attrs */
 	fsstack_copy_attr_all(trashbin_inode, d_inode(lower_trashbin_dentry));
 	fsstack_copy_inode_size(trashbin_inode, d_inode(lower_trashbin_dentry));
 
-	fsstack_copy_attr_all(dir, d_inode(lower_dir_dentry));
-	fsstack_copy_inode_size(dir, d_inode(lower_dir_dentry));
-
-	set_nlink(d_inode(dentry), 0);
-	d_inode(dentry)->i_ctime = dir->i_ctime;
-	d_drop(dentry); /* this is needed, else LTP fails (VFS won't do it) */
-
-out_put_lower_stbfile:
-	dput(lower_stbfile_dentry);
-out:
-	unlock_rename(lower_dir_dentry, lower_trashbin_dentry);
+	
+exit1:
+	inode_unlock(lower_trashbin_inode);
 	stbfs_put_lower_path(dentry, &lower_path);
 	stbfs_put_lower_path(trashbin_dentry, &lower_trashbin_path);
-	dput(lower_dir_dentry);
+	path_put(&lower_stbfile_path);
+
+	if (in_filp && !IS_ERR(in_filp)) 
+		filp_close(in_filp, NULL);
+	if (out_filp && !IS_ERR(out_filp)) 
+		filp_close(out_filp, NULL);
+
 	dput(trashbin_dentry);
-	return err;
+	if (err) {
+		dput(lower_stbfile_dentry);
+		return ERR_PTR(err);
+	}
+	return lower_stbfile_dentry;
 }
 
 static int stbfs_unlink(struct inode *dir, struct dentry *dentry)
 {
-	int err;
-	struct dentry *lower_dentry;
+	int err, err2;
+	struct dentry *lower_dentry, *lower_stbfile_dentry = NULL;
 	struct inode *lower_dir_inode = stbfs_lower_inode(dir);
+	struct inode *lower_trashbin_inode;
 	struct dentry *lower_dir_dentry;
 	struct path lower_path;
 	struct dentry * trashbin = stbfs_get_trashbin_dentry(dentry->d_sb);
@@ -218,10 +261,77 @@ static int stbfs_unlink(struct inode *dir, struct dentry *dentry)
 	 */
 	if (!stbfs_in_trashbin(dentry)) {
 		printk("stbfs: moving file to trashbin\n");
-		err = stbfs_move_to_trashbin(dir, dentry);
-		goto out_trashbin;
+		lower_stbfile_dentry = __stbfs_move_to_trashbin(dir, dentry);
+		/* If an error occured, we don't need proceed to unlink the
+		 * file because we failed to move the file to the trashbin
+		 */
+		if (IS_ERR(lower_stbfile_dentry)) {
+			err = PTR_ERR(lower_stbfile_dentry);
+			goto out_trashbin;
+		}
+		
 	}
 
+	stbfs_get_lower_path(dentry, &lower_path);
+	lower_dentry = lower_path.dentry;
+	dget(lower_dentry);
+	lower_dir_dentry = lock_parent(lower_dentry);
+	if (lower_dentry->d_parent != lower_dir_dentry ||
+	    d_unhashed(lower_dentry)) {
+		err = -EINVAL;
+		goto out;
+	}
+
+	err = vfs_unlink(lower_dir_inode, lower_dentry, NULL);
+
+	/*
+	 * Note: unlinking on top of NFS can cause silly-renamed files.
+	 * Trying to delete such files results in EBUSY from NFS
+	 * below.  Silly-renamed files will get deleted by NFS later on, so
+	 * we just need to detect them here and treat such EBUSY errors as
+	 * if the upper file was successfully deleted.
+	 */
+	if (err == -EBUSY && lower_dentry->d_flags & DCACHE_NFSFS_RENAMED)
+		err = 0;
+	if (err)
+		goto out;
+	fsstack_copy_attr_times(dir, lower_dir_inode);
+	fsstack_copy_inode_size(dir, lower_dir_inode);
+	set_nlink(d_inode(dentry),
+		  stbfs_lower_inode(d_inode(dentry))->i_nlink);
+	d_inode(dentry)->i_ctime = dir->i_ctime;
+	d_drop(dentry); /* this is needed, else LTP fails (VFS won't do it) */
+out:
+	unlock_dir(lower_dir_dentry);
+	if (err && lower_stbfile_dentry) {
+		/* unlink the file we already put into the trashbin */
+		lower_trashbin_inode = d_inode(lower_stbfile_dentry->d_parent);
+		inode_lock_nested(lower_trashbin_inode, I_MUTEX_PARENT);
+		err2 = vfs_unlink(d_inode(lower_stbfile_dentry->d_parent), lower_stbfile_dentry, NULL);
+		if (err2) {
+			printk(KERN_CRIT"stbfs: unable to unlink output in .stb folder on failure\n");
+		} else {
+			fsstack_copy_attr_all(d_inode(trashbin), lower_trashbin_inode);
+			fsstack_copy_inode_size(d_inode(trashbin), lower_trashbin_inode);
+		}
+		inode_unlock(lower_trashbin_inode);
+	}
+	dput(lower_dentry);
+	stbfs_put_lower_path(dentry, &lower_path);
+out_trashbin:
+	dput(trashbin);
+	if (!IS_ERR(lower_stbfile_dentry))
+		dput(lower_stbfile_dentry);
+	return err;
+}
+
+int stbfs_raw_unlink(struct inode *dir, struct dentry *dentry)
+{
+	int err;
+	struct dentry *lower_dentry;
+	struct inode *lower_dir_inode = stbfs_lower_inode(dir);
+	struct dentry *lower_dir_dentry;
+	struct path lower_path;
 
 	stbfs_get_lower_path(dentry, &lower_path);
 	lower_dentry = lower_path.dentry;
@@ -256,8 +366,6 @@ out:
 	unlock_dir(lower_dir_dentry);
 	dput(lower_dentry);
 	stbfs_put_lower_path(dentry, &lower_path);
-out_trashbin:
-	dput(trashbin);
 	return err;
 }
 
@@ -383,7 +491,7 @@ out:
  * The locking rules in stbfs_rename are complex.  We could use a simpler
  * superblock-level name-space lock for renames and copy-ups.
  */
-int __stbfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+static int stbfs_raw_rename(struct inode *old_dir, struct dentry *old_dentry,
 			 struct inode *new_dir, struct dentry *new_dentry,
 			 unsigned int flags)
 {
@@ -452,7 +560,10 @@ static int stbfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 			 struct inode *new_dir, struct dentry *new_dentry,
 			 unsigned int flags)
 {
-	return __stbfs_rename(old_dir, old_dentry, new_dir, new_dentry, flags);
+	if (stbfs_is_trashbin(old_dentry)) {
+		return -EPERM;
+	}
+	return stbfs_raw_rename(old_dir, old_dentry, new_dir, new_dentry, flags);
 }
 
 static const char *stbfs_get_link(struct dentry *dentry, struct inode *inode,
@@ -502,14 +613,9 @@ out:
 static int stbfs_permission(struct inode *inode, int mask)
 {
 	struct inode *lower_inode;
-	struct inode * lower_trashbin_inode;
 	int err;
-	lower_trashbin_inode = d_inode(STBFS_SB(inode->i_sb)->lower_trashbin.dentry);
+
 	lower_inode = stbfs_lower_inode(inode);
-	if (lower_trashbin_inode == lower_inode && mask & MAY_WRITE) {
-		printk("stbfs: trying to write .stb folder. access denied\n");
-		return -EPERM;
-	}
 	err = inode_permission(lower_inode, mask);
 	return err;
 }

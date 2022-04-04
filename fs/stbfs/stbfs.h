@@ -29,6 +29,8 @@
 #include <linux/cred.h>
 #include <linux/dirent.h>
 #include <linux/fs_struct.h>
+#include <linux/uuid.h>
+#include <linux/hashtable.h>
 /* the file system name */
 #define STBFS_NAME "stbfs"
 
@@ -36,7 +38,18 @@
 #define STBFS_ROOT_INO     1
 
 /* useful for tracking code reachability */
+#define DEBUG
+#ifdef DEBUG
+#define dbg_printk(fmt, ...) printk(KERN_DEFAULT "[DEBUG] stbfs: "fmt, ##__VA_ARGS__);
 #define UDBG printk(KERN_DEFAULT "DBG:%s:%s:%d\n", __FILE__, __func__, __LINE__)
+#else
+#define dbg_printk(fmt, ...)
+#define UDBG
+#endif
+
+#define ENCRYPT_FLAG 0x01
+#define DECRYPT_FLAG 0x02
+#define COPY_FLAG 0x04
 
 /* undelete cmd for ioctl */
 #define IOCTL_CMD_UNDELETE 0x7C
@@ -55,6 +68,7 @@ extern const struct vm_operations_struct stbfs_vm_ops;
 extern const struct export_operations stbfs_export_ops;
 extern const struct xattr_handler *stbfs_xattr_handlers[];
 
+struct cryptocopy_params;
 
 extern struct dentry * stbfs_get_trashbin_dentry(struct super_block * sb);
 extern int stbfs_init_inode_cache(void);
@@ -73,8 +87,12 @@ extern struct dentry * stbfs_alloc_dentry(const char * name,
 				struct dentry * parent, struct dentry * lower_parent);
 extern struct dentry *__lookup_hash(const struct qstr *name,
 		struct dentry *base, unsigned int flags);
-extern int __stbfs_rename(struct inode *old_dir, struct dentry *old_dentry,
-			 struct inode *new_dir, struct dentry *new_dentry, unsigned int flags);
+extern int stbfs_raw_unlink(struct inode *dir, struct dentry *dentry);
+extern long stbfs_cryptocopy(struct cryptocopy_params * params);
+extern void prepare_cryptocpy_arg(struct cryptocopy_params * p, struct file * src, struct file * dst, int flag);
+extern struct user_aes_key * stbfs_get_user_key(kuid_t uid);
+extern int stbfs_set_user_key(kuid_t uid, const char * key, int keylen);
+extern int create_aes_key(const char *password, char *key);
 
 /* file private data */
 struct stbfs_file_info {
@@ -100,6 +118,30 @@ struct stbfs_sb_info {
 	struct path lower_trashbin;
 };
 
+/* argument type for stbfs cryptocopy */
+struct cryptocopy_params {
+	struct file * in_filp;
+	struct file * out_filp;
+	char *  keybuf;
+	int key_len;
+	char * alg_name;
+	int flags;
+};
+
+/* per-user AES encryption key */
+struct user_aes_key {
+	char key[32];
+	int keylen;
+	struct hlist_node h_node;
+	kuid_t user_id;
+};
+
+struct user_key_hashtbl {
+	spinlock_t lock;
+	DECLARE_HASHTABLE(hashtbl, 12);
+};
+
+extern struct user_key_hashtbl user_key_hashtbl;
 /*
  * inode to private data
  *
@@ -227,7 +269,7 @@ static inline void get_datetime(char * str)
 	time64_t sec = ktime_get_real_seconds();
 	struct tm tm;
 	time64_to_tm(sec, 0, &tm);
-	sprintf(str, "%ld-%d-%d-%d-%d-%d-", 1900+tm.tm_year, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+	sprintf(str, "%ld-%d-%d-%d:%d:%d-", 1900+tm.tm_year, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 }
 
 static inline bool stbfs_is_trashbin(struct dentry * dentry)

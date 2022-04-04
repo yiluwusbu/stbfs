@@ -70,6 +70,11 @@ static kuid_t get_stbfile_userid(const char * filename)
 	int factor = 1;
 	int digit;
 	char c;
+	
+	while (cnt < len && (*loc < '0' || *loc > '9')) {
+		cnt++;
+		loc--;
+	}
 
 	while (cnt < len && (c = *loc) != '_') {
 		if (c < '0' || c > '9') {
@@ -197,13 +202,13 @@ static void stbfs_extract_old_filename(const char * fname, char * oldname)
 {
 	const char * loc = fname;
 	int namelen = strlen(fname);
-	int dashcnt = 0, cnt = 0; 
+	int dcnt = 0, cnt = 0; 
 	char * name_on_fail = "invalid_old_name";
 	int old_name_len = 0;
 	int len_before;
-	while (cnt < namelen && dashcnt < 6) {
-		if (*loc == '-') {
-			dashcnt++;
+	while (cnt < namelen && dcnt < 6) {
+		if (*loc == '-' || *loc == ':') {
+			dcnt++;
 		}
 		loc++; 
 		cnt++;
@@ -241,52 +246,108 @@ fail:
 static long stbfs_undelete_file(struct file *file)
 {
 	struct dentry * dentry = file->f_path.dentry;
-	struct dentry * new_dentry, * old_dir_dentry;
+	struct dentry * new_dentry;
+	struct dentry * old_dir_dentry, * new_dir_dentry;
 	struct inode * inode = d_inode(dentry);
-	struct path pwd;
+	struct path pwd, new_path;
 	struct inode *old_dir, *new_dir;
 	const struct cred * cred;
-	long err = 0;
+	struct file *in_filp=file, *out_filp=NULL;
+	struct cryptocopy_params cparams;
+	long err = 0, err2=0;
 	kuid_t root = KUIDT_INIT(0);
 	char oldname[MAX_DENTRY_NAME_LEN];
 	struct qstr qname;
-	printk("stbfs: undeleting...\n");
-	if (!inode) {
-		printk("stbfs: inode for file is empty\n");
-		return -EINVAL;
-	}
+	
 	/* permission check */
 	cred = get_current_cred();
 	if (!(uid_eq(cred->euid, root) || uid_eq(cred->euid, inode->i_uid))) {
 		err = -EPERM;
 		goto out1;
 	}
+	/* should only undeletes file in trashbin */
+	if (!stbfs_in_trashbin(file->f_path.dentry)) {
+		err = -EPERM;
+		goto out1;
+	}
+
 	get_fs_pwd(current->fs, &pwd);
 	new_dir = d_inode(pwd.dentry);
+	new_dir_dentry = pwd.dentry;
 	old_dir_dentry = dget_parent(dentry);
 	old_dir = d_inode(old_dir_dentry);
 	stbfs_extract_old_filename(dentry->d_name.name, oldname);
 	printk("stbfs: oldname is %s\n", oldname);
+	
+	lock_rename(new_dir_dentry, old_dir_dentry);
+	/* check PWD */
+	if (pwd.mnt != file->f_path.mnt || stbfs_is_trashbin(new_dir_dentry)) {
+		err = -EPERM;
+		goto out2;
+	}
 	/* setup qname */
 	qname.name = oldname;
 	qname.len = strlen(oldname);
-	qname.hash = full_name_hash(pwd.dentry, qname.name, qname.len);
-	new_dentry = __lookup_hash(&qname, pwd.dentry, 0);
+	qname.hash = full_name_hash(new_dir_dentry, qname.name, qname.len);
+	new_dentry = __lookup_hash(&qname, new_dir_dentry, 0);
 	
 	if (IS_ERR(new_dentry)) {
 		printk("stbfs: error in looking up the new dentry in CWD\n");
+		err = PTR_ERR(new_dentry);
 		goto out2;
 	}
-	
-	err = __stbfs_rename(old_dir, dentry, new_dir, new_dentry, 0);
 
-	if (err) {
-		printk("stbfs: error in renaming the undeleted file\n");
+	if (d_inode(new_dentry)) {
+		printk("stbfs: file to be recovered already exist in CWD\n");
+		err = -EEXIST;
 		goto out3;
 	}
+
+	err = vfs_create(new_dir, new_dentry, file_inode(file)->i_mode, false);
+	if (err) {
+		printk("stbfs: vfs_create returned errcode %ld\n", err);
+		goto out3;
+	}
+
+	new_path.mnt = file->f_path.mnt;
+	new_path.dentry = new_dentry;
+	out_filp = dentry_open(&new_path, O_RDWR, cred);
+
+	if (IS_ERR(out_filp)) {
+		err = PTR_ERR(out_filp);
+		printk("stbfs: error opening new file in CWD, errcode = %ld\n", err);
+		goto unlink_new;
+	}
+
+	prepare_cryptocpy_arg(&cparams, in_filp, out_filp, DECRYPT_FLAG);
+	err = stbfs_cryptocopy(&cparams);
+
+	if (err) {
+		printk("stbfs: cryptocopy failed with errcode %ld\n", err);
+		goto unlink_new;
+	}
+
+	/* If we have reached this point, the file in the trashbin is already undeleted */
+	err = stbfs_raw_unlink(old_dir, dentry);
+	if (err) {
+		/* if failed, nothing can be done here */
+		printk("stbfs: failed to unlink the file in the trashbin, errcode %ld\n", err);
+	}
+	goto out3;
+
+unlink_new:
+	err2 = stbfs_raw_unlink(new_dir, new_dentry);
+	if (err2) {
+		printk("stbfs: failed to unlink the (partial) undeleted file in CWD, errcode %ld\n", err2);
+	}
+	
 out3:
 	dput(new_dentry);
 out2:
+	unlock_rename(new_dir_dentry, old_dir_dentry);
+	if (out_filp && !IS_ERR(out_filp)) {
+		filp_close(out_filp, NULL);
+	}
 	path_put(&pwd);
 	dput(old_dir_dentry);
 out1:
@@ -302,10 +363,9 @@ static long stbfs_unlocked_ioctl(struct file *file, unsigned int cmd,
 	long err = -ENOTTY;
 	struct file *lower_file;
 
-	/* can only undelete a file in the trashbin */
-	if (cmd == IOCTL_CMD_UNDELETE && stbfs_in_trashbin(file->f_path.dentry)) {
+	if (cmd == IOCTL_CMD_UNDELETE ) {
 		return stbfs_undelete_file(file);
-	}
+	} 
 	printk("stbfs: cmd = %d, dentry = %s\n", cmd, file->f_path.dentry->d_name.name);
 
 	lower_file = stbfs_lower_file(file);

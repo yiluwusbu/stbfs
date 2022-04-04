@@ -9,6 +9,72 @@
 #include "stbfs.h"
 #include <linux/module.h>
 
+struct user_key_hashtbl user_key_hashtbl;
+
+static void stbfs_destroy_user_keys(void)
+{
+	int bkt;
+	struct hlist_node *tmp;
+	struct user_aes_key *cursor;
+	hash_for_each_safe(user_key_hashtbl.hashtbl, bkt, tmp, cursor, h_node) {
+		hash_del(&cursor->h_node);
+		kfree(cursor);
+	}
+}
+
+static struct user_aes_key * stbfs_get_user_key_unlocked(kuid_t uid)
+{
+	struct user_aes_key *cursor;
+	struct user_aes_key * res = NULL;
+	uid_t key = __kuid_val(uid);
+
+	hash_for_each_possible(user_key_hashtbl.hashtbl, cursor, h_node, key) {
+		if (uid_eq(cursor->user_id, uid)) {
+			res = cursor;
+			break;
+		}
+	}
+	
+	return res;
+}
+struct user_aes_key * stbfs_get_user_key(kuid_t uid)
+{
+	struct user_aes_key * res;
+	spin_lock(&user_key_hashtbl.lock);
+	res = stbfs_get_user_key_unlocked(uid);
+	spin_unlock(&user_key_hashtbl.lock);
+	return res;
+}
+
+int stbfs_set_user_key(kuid_t uid, const char * key, int keylen)
+{
+	struct user_aes_key * new_key = NULL;
+	struct user_aes_key * old_key = NULL;
+	uid_t hash_key = __kuid_val(uid);
+	if (keylen != 16 && keylen != 24 && keylen != 32) {
+		return -EINVAL;
+	}
+	new_key = kzalloc(sizeof(struct user_aes_key), GFP_KERNEL);
+	if (!new_key) {
+		return -ENOMEM;
+	}
+	memcpy(new_key->key, key, keylen);
+	new_key->keylen = keylen;
+	new_key->user_id = uid;
+	
+	spin_lock(&user_key_hashtbl.lock);
+	old_key = stbfs_get_user_key_unlocked(uid);
+	if (old_key) {
+		hash_del(&old_key->h_node);
+	}
+	hash_add(user_key_hashtbl.hashtbl, &new_key->h_node, hash_key);
+	spin_unlock(&user_key_hashtbl.lock);
+
+	if (old_key) {
+		kfree(old_key);
+	}
+	return 0;
+}
 
 static int create_trashbin(struct dentry * lower_root_dentry, struct dentry * root_dentry)
 {
@@ -176,15 +242,20 @@ static int stbfs_read_super(struct super_block *sb, void *raw_data, int silent)
 	 * d_rehash it.
 	 */
 	d_rehash(sb->s_root);
+	/* create a transhbin */
+	err = create_trashbin(lower_path.dentry, sb->s_root);
+	if (err) {
+		stbfs_reset_lower_path(sb->s_root);
+		printk("stbfs: failed to create trashbin\n");
+		goto out_freeroot;
+	}
+
 	if (!silent)
 		printk(KERN_INFO
 		       "stbfs: mounted on top of %s type %s\n",
 		       dev_name, lower_sb->s_type->name);
 	
-	/* create a transhbin */
-	if (create_trashbin(lower_path.dentry, sb->s_root)) {
-		printk("stbfs: failed to create trashbin\n");
-	}
+	
 	goto out; /* all is well */
 
 	/* no longer needed: stbfs_free_dentry_private_data(sb->s_root); */
@@ -204,10 +275,39 @@ out:
 	return err;
 }
 
+static char * stbfs_parse_mount_options(const char * data)
+{
+	int len = strlen(data);
+	char * option = "enc=";
+	char * substr;
+	dbg_printk("data is %s, dlen=%d\n", data, len);
+	substr = strstr(data, option);
+	if (!substr) {
+		return NULL;
+	}
+	if (len - (substr - data) - strlen(option) <= 0 ) {
+		return NULL;
+	} 
+	return substr + strlen(option);
+}
+
 struct dentry *stbfs_mount(struct file_system_type *fs_type, int flags,
 			    const char *dev_name, void *raw_data)
 {
+	char key[16];
 	void *lower_path_name = (void *) dev_name;
+	char * p = stbfs_parse_mount_options((char*)raw_data);
+	int err;
+	
+	if (p) {
+		dbg_printk("Password is %s\n", p);
+		err = create_aes_key(p, key);
+		if (!err) {
+			stbfs_set_user_key(current_cred()->uid, key, 16);
+		}
+	} else{
+		dbg_printk("No password passed\n");
+	}
 
 	return mount_nodev(fs_type, flags, lower_path_name,
 			   stbfs_read_super);
@@ -215,6 +315,8 @@ struct dentry *stbfs_mount(struct file_system_type *fs_type, int flags,
 
 void stbfs_shutdown_super(struct super_block *sb)
 {
+	/* remove userkeys from hashtbl */
+	stbfs_destroy_user_keys();
 	stbfs_put_lower_trashbin(sb);
 	generic_shutdown_super(sb);
 }
@@ -233,7 +335,8 @@ static int __init init_stbfs_fs(void)
 	int err;
 
 	pr_info("Registering stbfs " STBFS_VERSION "\n");
-
+	/* init user key hash table */
+	hash_init(user_key_hashtbl.hashtbl);
 	err = stbfs_init_inode_cache();
 	if (err)
 		goto out;
