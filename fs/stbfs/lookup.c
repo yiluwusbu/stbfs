@@ -350,10 +350,16 @@ __must_check struct dentry * stbfs_get_trashbin_dentry(struct super_block * sb)
 	struct dentry * trashbin, * ret_dentry;
 	struct qstr qname = {.name=".stb", .len=strlen(".stb")};
 	qname.hash = full_name_hash(sb->s_root, qname.name, qname.len);
+	trashbin = d_lookup(sb->s_root, &qname);
+	if (trashbin) {
+		dbg_printk("trashbin lookup has a dcache hit\n");
+		return trashbin;
+	}
 	trashbin = d_alloc(sb->s_root, &qname);
 	if (!trashbin) {
 		return ERR_PTR(-ENOMEM);
 	}
+	
 	ret_dentry = stbfs_lookup(d_inode(sb->s_root), trashbin, LOOKUP_DIRECTORY);
 	if (IS_ERR(ret_dentry)) {
 		printk("stbfs: error looking up .stb dentry, errcode = %ld\n", PTR_ERR(ret_dentry));

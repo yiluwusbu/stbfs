@@ -198,7 +198,7 @@ static int calc_hash(struct crypto_shash *alg,
     return ret;
 }
 
-int create_aes_key(const char *password, char *key)
+int create_aes_key_16(const char *password, char *key)
 {
 	struct crypto_shash *hash_alg;
 	int len = strlen(password);

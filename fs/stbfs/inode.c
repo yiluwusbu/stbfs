@@ -51,6 +51,10 @@ static int stbfs_link(struct dentry *old_dentry, struct inode *dir,
 	int err;
 	struct path lower_old_path, lower_new_path;
 
+	if (stbfs_in_trashbin(old_dentry)) {
+		return -EPERM;
+	}
+
 	file_size_save = i_size_read(d_inode(old_dentry));
 	stbfs_get_lower_path(old_dentry, &lower_old_path);
 	stbfs_get_lower_path(new_dentry, &lower_new_path);
@@ -121,19 +125,21 @@ static void generate_stbfile_name(char * str, const char * file_name, kuid_t kui
 
 
 
-void prepare_cryptocpy_arg(struct cryptocopy_params * p, struct file * src, struct file * dst, int flag)
+int prepare_cryptocpy_arg(struct cryptocopy_params * p, struct file * src, struct file * dst, int flag)
 {
 	struct user_aes_key * key;
+	dbg_printk("user id = %d\n", __kuid_val(current_cred()->uid));
 	key = stbfs_get_user_key(current_cred()->uid);
 	if (!key) {
-		key = stbfs_get_user_key(KUIDT_INIT(0));
+		return -ENOKEY;
 	}
 	p->in_filp = src;
 	p->out_filp = dst;
 	p->alg_name = "ctr-aes-aesni";
-	p->keybuf = key ? key->key : NULL;
-	p->key_len =  key ? key->keylen : 0;
-	p->flags = key ? flag : COPY_FLAG;
+	p->keybuf = key->key;
+	p->key_len = key->keylen;
+	p->flags = flag;
+	return 0;
 }
 
 /* returns the lower dentry of created file in trashbin if successful */ 
@@ -144,7 +150,8 @@ static struct dentry * __stbfs_move_to_trashbin(struct inode *dir, struct dentry
 	struct dentry *lower_trashbin_dentry;
 	struct dentry *trashbin_dentry;
 	struct inode *trashbin_inode, *lower_trashbin_inode;
-	struct path lower_path, lower_trashbin_path, lower_stbfile_path;
+	struct path lower_path, lower_trashbin_path;
+	struct path lower_stbfile_path = {.mnt=NULL, .dentry=NULL};
 	struct qstr qname;
 	struct cryptocopy_params cparams;
 	struct file * in_filp=NULL, *out_filp=NULL;
@@ -170,6 +177,11 @@ static struct dentry * __stbfs_move_to_trashbin(struct inode *dir, struct dentry
 	inode_lock(lower_trashbin_inode);
 	/* Normally, this should return a negative dentry */
 	lower_stbfile_dentry = __lookup_hash(&qname, lower_trashbin_dentry, 0);
+	if (IS_ERR(lower_stbfile_dentry)) {
+		err = PTR_ERR(lower_stbfile_dentry);
+		lower_stbfile_dentry = NULL;
+		goto exit1;
+	}
 	lower_stbfile_path.mnt = mntget(lower_trashbin_path.mnt);
 	lower_stbfile_path.dentry = dget(lower_stbfile_dentry);
 
@@ -195,14 +207,21 @@ static struct dentry * __stbfs_move_to_trashbin(struct inode *dir, struct dentry
 	if (IS_ERR(out_filp)) {
 		printk("stbfs: failed to open a new file in .stb folder\n");
 		err = PTR_ERR(out_filp);
-		goto exit1;
+		goto may_unlink;
 	}
-	prepare_cryptocpy_arg(&cparams, in_filp, out_filp, ENCRYPT_FLAG);
+	
+	err = prepare_cryptocpy_arg(&cparams, in_filp, out_filp, ENCRYPT_FLAG);
+	if (err) {
+		printk("stbfs: error getting user's encryption key, errcode = %d\n", err);
+		goto may_unlink;
+	}
 	
 	err = stbfs_cryptocopy(&cparams);
-
-	if (err) {
+	if (err)
 		printk("stbfs: cryptocopy failed with error code %d\n", err);
+
+may_unlink:
+	if (err) {
 		/* delete partial output on failure */
 		err2 = vfs_unlink(lower_trashbin_inode, lower_stbfile_dentry, NULL);
 		if (err2) {
@@ -617,6 +636,7 @@ static int stbfs_permission(struct inode *inode, int mask)
 
 	lower_inode = stbfs_lower_inode(inode);
 	err = inode_permission(lower_inode, mask);
+
 	return err;
 }
 

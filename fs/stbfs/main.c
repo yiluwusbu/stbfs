@@ -11,6 +11,12 @@
 
 struct user_key_hashtbl user_key_hashtbl;
 
+static void stbfs_release_user_key(struct user_aes_key * k)
+{
+	kfree(k->password);
+	kfree(k);
+}
+
 static void stbfs_destroy_user_keys(void)
 {
 	int bkt;
@@ -18,7 +24,7 @@ static void stbfs_destroy_user_keys(void)
 	struct user_aes_key *cursor;
 	hash_for_each_safe(user_key_hashtbl.hashtbl, bkt, tmp, cursor, h_node) {
 		hash_del(&cursor->h_node);
-		kfree(cursor);
+		stbfs_release_user_key(cursor);
 	}
 }
 
@@ -37,6 +43,7 @@ static struct user_aes_key * stbfs_get_user_key_unlocked(kuid_t uid)
 	
 	return res;
 }
+
 struct user_aes_key * stbfs_get_user_key(kuid_t uid)
 {
 	struct user_aes_key * res;
@@ -46,34 +53,67 @@ struct user_aes_key * stbfs_get_user_key(kuid_t uid)
 	return res;
 }
 
-int stbfs_set_user_key(kuid_t uid, const char * key, int keylen)
+void stbfs_delete_user_key(kuid_t uid)
+{
+	struct user_aes_key * res;
+	spin_lock(&user_key_hashtbl.lock);
+	res = stbfs_get_user_key_unlocked(uid);
+	if (res) {
+		hash_del(&res->h_node);
+		stbfs_release_user_key(res);
+	}
+	spin_unlock(&user_key_hashtbl.lock);
+	return;
+}
+
+
+int stbfs_set_user_key(kuid_t uid, const char * password)
 {
 	struct user_aes_key * new_key = NULL;
 	struct user_aes_key * old_key = NULL;
+	char * pswd_copy = NULL;
+	int err = 0;
 	uid_t hash_key = __kuid_val(uid);
-	if (keylen != 16 && keylen != 24 && keylen != 32) {
-		return -EINVAL;
-	}
+	
 	new_key = kzalloc(sizeof(struct user_aes_key), GFP_KERNEL);
 	if (!new_key) {
-		return -ENOMEM;
+		err = -ENOMEM;
+		goto err_out;
 	}
-	memcpy(new_key->key, key, keylen);
-	new_key->keylen = keylen;
+	
+	pswd_copy = kzalloc(strlen(password)+1, GFP_KERNEL);
+	if (!pswd_copy) {
+		err = -ENOMEM;
+		goto err_out;
+	}
+
+	strcpy(pswd_copy, password);
+	err = create_aes_key_16(pswd_copy, new_key->key);
+	if (err) {
+		goto err_out;
+	}
+
+	new_key->keylen = 16; 
 	new_key->user_id = uid;
+	new_key->password = pswd_copy;
 	
 	spin_lock(&user_key_hashtbl.lock);
 	old_key = stbfs_get_user_key_unlocked(uid);
 	if (old_key) {
 		hash_del(&old_key->h_node);
+		kfree(old_key);
 	}
 	hash_add(user_key_hashtbl.hashtbl, &new_key->h_node, hash_key);
 	spin_unlock(&user_key_hashtbl.lock);
+	goto ok;
 
-	if (old_key) {
-		kfree(old_key);
-	}
-	return 0;
+err_out:
+	if (new_key)
+		kfree(new_key);
+	if (pswd_copy)
+		kfree(new_key);
+ok:
+	return err;
 }
 
 static int create_trashbin(struct dentry * lower_root_dentry, struct dentry * root_dentry)
@@ -275,46 +315,278 @@ out:
 	return err;
 }
 
-static char * stbfs_parse_mount_options(const char * data)
+struct getdents_callback64 {
+	struct dir_context ctx;
+	struct linux_dirent64 __user * current_dir;
+	struct linux_dirent64 __user * previous;
+	int count;
+	int error;
+};
+
+static int verify_dirent_name(const char *name, int len)
 {
-	int len = strlen(data);
-	char * option = "enc=";
+	if (!len)
+		return -EIO;
+	if (memchr(name, '/', len))
+		return -EIO;
+	return 0;
+}
+
+static int __filldir64(struct dir_context *ctx, const char *name, int namlen,
+		     loff_t offset, u64 ino, unsigned int d_type)
+{
+	struct linux_dirent64 *dirent;
+	struct getdents_callback64 *buf =
+		container_of(ctx, struct getdents_callback64, ctx);
+	int reclen = ALIGN(offsetof(struct linux_dirent64, d_name) + namlen + 1,
+		sizeof(u64));
+
+	buf->error = verify_dirent_name(name, namlen);
+	if (unlikely(buf->error))
+		return buf->error;
+	buf->error = -EINVAL;	/* only used if we fail.. */
+	if (reclen > buf->count)
+		return -EINVAL;
+	dirent = buf->previous;
+
+
+	if (dirent)
+		dirent->d_off = offset;
+	dirent = buf->current_dir;
+	dirent->d_ino = ino;
+	dirent->d_reclen = reclen;
+	dirent->d_type = d_type;
+	strncpy(dirent->d_name, name, namlen);
+
+	buf->previous = dirent;
+	dirent = (void *)dirent + reclen;
+	buf->current_dir = dirent;
+	buf->count -= reclen;
+	return 0;
+
+}
+
+static int __isleap(long year)
+{
+	return (year) % 4 == 0 && ((year) % 100 != 0 || (year) % 400 == 0);
+}
+
+static const unsigned short __mon_yday[2][13] = {
+	/* Normal years. */
+	{0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365},
+	/* Leap years. */
+	{0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366}
+};
+
+static time64_t get_creation_time(const char * fname)
+{
+	int len = strlen(fname);
+	int i=0;
+	int num_cnt=0;
+	int val = 0;
+	long vals[6];
+	long tm_year, tm_yday, tm_hour, tm_min, tm_sec;
+	int idx;
+	while (i < len && num_cnt < 6) {
+		if (fname[i] >= '0' && fname[i] <= '9') {
+			val = val * 10 + (fname[i] - '0');
+		} else {
+			vals[num_cnt] = val;
+			val = 0;
+			num_cnt++;
+		}
+		i++;
+	}
+	if (num_cnt != 6) {
+		pr_info("stbfs: invalid file name in .stb: %s\n", fname);
+		return 0;
+	}
+	/* dbg_printk("year %ld, mon %ld, day %ld, hour %ld, min %ld, sec %ld for %s\n", vals[0],vals[1],vals[2],vals[3],vals[4],vals[5], fname); */
+	tm_year = vals[0] - 1900;
+	tm_hour = vals[3];
+	tm_min = vals[4];
+	tm_sec = vals[5];
+	
+	idx = __isleap(vals[0]) ? 1 : 0;
+	tm_yday = __mon_yday[idx][vals[1] - 1] + vals[2] - 1;
+	return tm_sec + tm_min*60 + tm_hour*3600 + tm_yday*86400 +
+		   (tm_year-70)*31536000 + ((tm_year-69)/4)*86400 -
+		   ((tm_year-1)/100)*86400 + ((tm_year+299)/400)*86400;
+}
+
+static void clean_old_files(struct linux_dirent64 * dirent, struct dentry * trashbin_dir, 
+					int bufsize, long max_age)
+{
+	time64_t cur_time = ktime_get_real_seconds();
+	time64_t birth;
+	struct dentry * dentry;
+	int consumed = 0;
+	int err;
+	struct qstr qname;
+
+	while (consumed < bufsize) {
+		dentry = NULL;
+		if (!strcmp(dirent->d_name, ".") 
+			||!strcmp(dirent->d_name, "..") ) {
+			goto next;
+		}
+		birth = get_creation_time(dirent->d_name);
+		
+		if (cur_time - birth > max_age) {
+			qname.name = dirent->d_name;
+			qname.len = strlen(dirent->d_name);
+			qname.hash = full_name_hash(trashbin_dir, qname.name, qname.len);
+			dentry = __lookup_hash(&qname, trashbin_dir, 0);
+			if (IS_ERR(dentry)) {
+				pr_info("stbfs: error looking up name of the file to be garbage collected\n");
+				goto next;
+			}
+			if (!d_inode(dentry)) {
+				goto next;
+			}
+			err = stbfs_raw_unlink(d_inode(trashbin_dir), dentry);
+			if (err) {
+				pr_info("stbfs: error deleting file %s "
+						"when performing garbage collection\n", dirent->d_name);
+			} 
+		}
+next:
+		if (!IS_ERR(dentry)) {
+			dput(dentry);
+		}
+		consumed += dirent->d_reclen;
+		dirent = (struct linux_dirent64*)((void*)dirent + dirent->d_reclen);
+	}
+}
+
+int garbage_collection_thread(void * val)
+{
+	struct dentry * dentry = NULL;
+	struct super_block * sb = (struct super_block *) val;
+	long max_age = STBFS_SB(sb)->max_age;
+	struct file * filp = NULL;
+	struct path lower_path;
+	struct getdents_callback64 buf;
+	struct linux_dirent64 * dirent = NULL;
+	int err;
+	int bufsize = 4096;
+	
+	dentry = stbfs_get_trashbin_dentry(sb);
+	stbfs_get_lower_path(dentry, &lower_path);
+
+	dirent = kmalloc(bufsize, GFP_KERNEL);
+	if (!dirent) {
+		printk("stbfs: garbage collection thread can't allocate enough memory\n");
+		goto end;
+	}
+	pr_info("stbfs: created garbage collection thread, max_age=%ld\n", max_age);
+	while (!kthread_should_stop()) {
+		ssleep(2);
+		inode_lock(d_inode(dentry));
+
+		filp = dentry_open(&lower_path, O_RDONLY, current_cred());
+		if (IS_ERR(filp)) {
+			printk("stbfs: garbage collection thread can't open .stb folder\n");
+			goto unlock;
+		}
+
+		for (;;) {
+			memset(dirent, 0, bufsize);
+			buf.ctx.actor = __filldir64;
+			buf.count = bufsize;
+			buf.current_dir = dirent;
+
+			err = iterate_dir(filp, &buf.ctx);
+			
+			if (bufsize - buf.count == 0) {
+				break;
+			}
+			if (err < 0) {
+				printk("stbfs: iterate_dir returns error code %d\n", err);
+				break;
+			} 
+			clean_old_files(dirent, dentry, bufsize - buf.count, max_age);
+			
+		}
+unlock:
+		inode_unlock(d_inode(dentry));
+		if (!IS_ERR(filp)) {
+			filp_close(filp, NULL);
+			filp = NULL;
+		}	
+		
+	}
+
+end:
+	stbfs_put_lower_path(dentry, &lower_path);
+	if (dentry)
+		dput(dentry);
+	if (dirent)
+		kfree(dirent);
+	return 0;
+}
+
+
+struct stbfs_mount_options {
+	long max_age;
+};
+
+static int stbfs_parse_mount_options(const char * data, struct stbfs_mount_options * options)
+{
+	int len;
+	char * option = "T=";
 	char * substr;
-	dbg_printk("data is %s, dlen=%d\n", data, len);
+	int err = 0;
+
+	if (!data) {
+		return 0;
+	}
+	
+	len = strlen(data);
 	substr = strstr(data, option);
 	if (!substr) {
-		return NULL;
+		return 0;
 	}
 	if (len - (substr - data) - strlen(option) <= 0 ) {
-		return NULL;
+		return -EINVAL;
 	} 
-	return substr + strlen(option);
+	substr += strlen(option);
+	err = kstrtol(substr, 10,& options->max_age);
+	return err;
 }
+
+static struct task_struct *gthread;
 
 struct dentry *stbfs_mount(struct file_system_type *fs_type, int flags,
 			    const char *dev_name, void *raw_data)
 {
-	char key[16];
 	void *lower_path_name = (void *) dev_name;
-	char * p = stbfs_parse_mount_options((char*)raw_data);
+	struct stbfs_mount_options options = {0,};
+	struct dentry * root;
 	int err;
-	
-	if (p) {
-		dbg_printk("Password is %s\n", p);
-		err = create_aes_key(p, key);
-		if (!err) {
-			stbfs_set_user_key(current_cred()->uid, key, 16);
-		}
-	} else{
-		dbg_printk("No password passed\n");
+	err = stbfs_parse_mount_options((const char*)raw_data, &options);
+	if (err) {
+		pr_info("stbfs: error parsing mount options\n");
 	}
-
-	return mount_nodev(fs_type, flags, lower_path_name,
+	root =  mount_nodev(fs_type, flags, lower_path_name,
 			   stbfs_read_super);
+
+	pr_info("stbfs: max_age is set as %ld\n", options.max_age);
+	if (!IS_ERR(root) && options.max_age > 0) {
+		STBFS_SB(root->d_sb)->max_age = options.max_age;
+		gthread = kthread_run(garbage_collection_thread, root->d_sb, "Garbage Collection Thread");
+		if (!gthread) {
+			pr_info("stbfs: error creating garbage collection thread\n");
+		} 
+	}
+	return root;
 }
 
 void stbfs_shutdown_super(struct super_block *sb)
 {
+	if (gthread)
+		kthread_stop(gthread);
+	gthread = NULL;
 	/* remove userkeys from hashtbl */
 	stbfs_destroy_user_keys();
 	stbfs_put_lower_trashbin(sb);

@@ -31,6 +31,9 @@
 #include <linux/fs_struct.h>
 #include <linux/uuid.h>
 #include <linux/hashtable.h>
+#include <linux/types.h>
+#include <linux/kthread.h>
+#include <linux/delay.h>
 /* the file system name */
 #define STBFS_NAME "stbfs"
 
@@ -53,6 +56,10 @@
 
 /* undelete cmd for ioctl */
 #define IOCTL_CMD_UNDELETE 0x7C
+#define IOCTL_CMD_LIST_KEY 0x7D
+#define IOCTL_CMD_SET_KEY 0x7E
+#define IOCTL_CMD_DEL_KEY 0x7A
+
 #define MAX_DENTRY_NAME_LEN 256
 
 /* operations vectors defined in specific files */
@@ -89,10 +96,11 @@ extern struct dentry *__lookup_hash(const struct qstr *name,
 		struct dentry *base, unsigned int flags);
 extern int stbfs_raw_unlink(struct inode *dir, struct dentry *dentry);
 extern long stbfs_cryptocopy(struct cryptocopy_params * params);
-extern void prepare_cryptocpy_arg(struct cryptocopy_params * p, struct file * src, struct file * dst, int flag);
+extern int prepare_cryptocpy_arg(struct cryptocopy_params * p, struct file * src, struct file * dst, int flag);
 extern struct user_aes_key * stbfs_get_user_key(kuid_t uid);
-extern int stbfs_set_user_key(kuid_t uid, const char * key, int keylen);
-extern int create_aes_key(const char *password, char *key);
+extern int stbfs_set_user_key(kuid_t uid, const char * password);
+extern int create_aes_key_16(const char *password, char *key);
+extern void stbfs_delete_user_key(kuid_t uid);
 
 /* file private data */
 struct stbfs_file_info {
@@ -116,6 +124,7 @@ struct stbfs_dentry_info {
 struct stbfs_sb_info {
 	struct super_block *lower_sb;
 	struct path lower_trashbin;
+	long max_age;
 };
 
 /* argument type for stbfs cryptocopy */
@@ -132,6 +141,7 @@ struct cryptocopy_params {
 struct user_aes_key {
 	char key[32];
 	int keylen;
+	char * password;
 	struct hlist_node h_node;
 	kuid_t user_id;
 };

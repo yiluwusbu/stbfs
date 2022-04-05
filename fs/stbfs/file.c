@@ -46,12 +46,6 @@ static ssize_t stbfs_write(struct file *file, const char __user *buf,
 	return err;
 }
 
-// struct linux_dirent {
-// 	unsigned long	d_ino;
-// 	unsigned long	d_off;
-// 	unsigned short	d_reclen;
-// 	char		d_name[1];
-// };
 
 struct getdents_callback64 {
 	struct dir_context ctx;
@@ -319,9 +313,13 @@ static long stbfs_undelete_file(struct file *file)
 		goto unlink_new;
 	}
 
-	prepare_cryptocpy_arg(&cparams, in_filp, out_filp, DECRYPT_FLAG);
-	err = stbfs_cryptocopy(&cparams);
+	err = prepare_cryptocpy_arg(&cparams, in_filp, out_filp, DECRYPT_FLAG);
+	if (err) {
+		printk("stbfs: error getting users key\n");
+		goto unlink_new;
+	}
 
+	err = stbfs_cryptocopy(&cparams);
 	if (err) {
 		printk("stbfs: cryptocopy failed with errcode %ld\n", err);
 		goto unlink_new;
@@ -357,15 +355,145 @@ out1:
 
 }
 
+struct password_record {
+	int plen;
+	uid_t uid;
+	char password[32];
+};
+
+struct stbfs_ioctl_arg {
+	int nrecs;
+	struct password_record recs[0]; 
+};
+
+static int stbfs_handle_set_key(struct stbfs_ioctl_arg * uarg)
+{
+	int ubuf_size;
+	int err = 0;
+	struct stbfs_ioctl_arg * karg = NULL;
+	struct password_record * rec = NULL;;
+	
+
+	if (!uarg) {
+		return -EINVAL;
+	}
+	
+	ubuf_size = sizeof(*karg) + sizeof(*rec);
+	karg = kmalloc(ubuf_size, GFP_KERNEL);
+	if (!karg) {
+		return -ENOMEM;
+	}
+	err = copy_from_user(karg, uarg, ubuf_size);
+	if (err) {
+		err = -EFAULT;
+		goto out;
+	}
+	if (karg->nrecs != 1) {
+		err = -EINVAL;
+		goto out;
+	}
+	rec = karg->recs;
+	if (rec->plen >= 32 || rec->plen < 6) {
+		err = -EINVAL;
+		goto out;
+	}
+	/* null-terminate the password */
+	rec->password[rec->plen] = 0;
+	err = stbfs_set_user_key(current_cred()->uid, rec->password);
+	
+out:
+	if (karg)
+		kfree(karg);
+	return err;
+}
+
+static int stbfs_handle_list_key(struct stbfs_ioctl_arg * uarg)
+{
+	int recs_size;
+	int err = 0;
+	int cnt=0, bkt;
+	struct stbfs_ioctl_arg * karg = NULL;
+	struct password_record * recs = NULL;
+	struct user_aes_key * ukey;
+
+	if (!uarg) {
+		return -EINVAL;
+	}
+	
+	karg = kmalloc(sizeof(*karg), GFP_KERNEL);
+	if (!karg) {
+		return -ENOMEM;
+	}
+	err = copy_from_user(karg, uarg, sizeof(*karg));
+	if (err) {
+		err = -EFAULT;
+		goto out;
+	}
+	if (karg->nrecs < 1 || karg->nrecs > 4096) {
+		err = -EINVAL;
+		goto out;
+	}
+	recs_size = karg->nrecs * sizeof(struct password_record);
+
+	recs = kmalloc(recs_size, GFP_KERNEL);
+	if (!recs) {
+		err = -ENOMEM;
+		goto out;
+	}
+
+	if (uid_eq(current_cred()->euid, KUIDT_INIT(0))) {
+		spin_lock(&user_key_hashtbl.lock);
+		hash_for_each(user_key_hashtbl.hashtbl, bkt, ukey, h_node) {
+			if (cnt >= karg->nrecs) {
+				break;
+			}
+			strcpy(recs[cnt].password, ukey->password);
+			recs[cnt].plen = strlen(ukey->password);
+			recs[cnt].uid = __kuid_val(ukey->user_id);
+			cnt++;
+		}
+		spin_unlock(&user_key_hashtbl.lock);
+		karg->nrecs = cnt;
+	} else {
+		ukey = stbfs_get_user_key(current_cred()->euid);
+		if (ukey) {
+			strcpy(recs[0].password, ukey->password);
+			recs[0].plen = strlen(ukey->password);
+			recs[0].uid = __kuid_val(ukey->user_id);
+			cnt = 1;
+		} 
+		karg->nrecs = cnt;
+	}
+
+	err = copy_to_user(uarg, karg, sizeof(*karg));
+	err = copy_to_user(uarg->recs, recs, cnt * sizeof(struct password_record));
+	
+out:
+	if (karg)
+		kfree(karg);
+	if (recs)
+		kfree(recs);
+	return err;
+}
+
 static long stbfs_unlocked_ioctl(struct file *file, unsigned int cmd,
 				  unsigned long arg)
 {
 	long err = -ENOTTY;
 	struct file *lower_file;
+	struct stbfs_ioctl_arg * uarg = (struct stbfs_ioctl_arg *)arg;
 
-	if (cmd == IOCTL_CMD_UNDELETE ) {
+	if (cmd == IOCTL_CMD_UNDELETE) {
 		return stbfs_undelete_file(file);
-	} 
+	} else if (cmd == IOCTL_CMD_SET_KEY) {
+		return stbfs_handle_set_key(uarg);
+	} else if (cmd == IOCTL_CMD_LIST_KEY) {
+		return stbfs_handle_list_key(uarg);
+	} else if (cmd == IOCTL_CMD_DEL_KEY) {
+		stbfs_delete_user_key(current_cred()->uid);
+		return 0;
+	}
+
 	printk("stbfs: cmd = %d, dentry = %s\n", cmd, file->f_path.dentry->d_name.name);
 
 	lower_file = stbfs_lower_file(file);
