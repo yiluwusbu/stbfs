@@ -112,7 +112,6 @@ static void generate_stbfile_name(char * str, const char * file_name, kuid_t kui
 {
 	char userid[32];
 	get_datetime(str);
-	printk("date: %s\n", str);
 	if (is_enc) {
 		sprintf(userid, "_user_%d.enc", __kuid_val(kuid));
 	} else {

@@ -247,7 +247,7 @@ static int do_decrypt_file(struct file * infilp, struct file * outfilp, struct c
 	struct scatterlist sg;
 	ssize_t nread, nwrite, to_write;
 	ssize_t total_read=0;
-	int i, iv_size;
+	int iv_size;
 	char * iv = NULL;
 	uint64_t orig_file_sz = 0;
 	struct crypto_skcipher * skcipher = NULL;
@@ -274,7 +274,7 @@ static int do_decrypt_file(struct file * infilp, struct file * outfilp, struct c
 	blksz = crypto_skcipher_blocksize(skcipher);
 	dbg_printk("blksz = %d\n", blksz);
 	bufsz = ROUND_UP_DIV(PAGE_SIZE, blksz) * blksz;
-	buf = kmalloc(bufsz, GFP_KERNEL);
+	buf = kzalloc(bufsz, GFP_KERNEL);
 	if (!buf) {
 		ret =  -ENOMEM;
 		goto out;
@@ -303,22 +303,22 @@ static int do_decrypt_file(struct file * infilp, struct file * outfilp, struct c
 		memcpy(&pageno, iv, 8);
 	}
 	
-	while ((nread = kernel_read(infilp, buf, PAGE_SIZE, &infilp->f_pos)) > 0) {
+	while ((nread = kernel_read(infilp, buf, bufsz, &infilp->f_pos)) > 0) {
 		total_read += nread;
-		for (i=0; i < ROUND_UP_DIV(nread, blksz) ; i++) {
-			sg_init_one(&sg, buf + i * blksz, blksz);
-			skcipher_request_set_crypt(req, &sg, &sg, blksz, iv);
-			ret = crypto_skcipher_decrypt(req);
-			if (ret) {
-				dbg_printk("decryption function returned %d, when decrypting blk %d\n", ret, i);
-				goto out;
-			}
-			// update iv
-			if (iv) {
-				pageno++;
-				memcpy(iv, &pageno, 8);
-			}
+
+		sg_init_one(&sg, buf, nread);
+		skcipher_request_set_crypt(req, &sg, &sg, nread, iv);
+		ret = crypto_skcipher_decrypt(req);
+		if (ret) {
+			dbg_printk("decryption function returned %d\n", ret);
+			goto out;
 		}
+		// update iv
+		if (iv) {
+			pageno++;
+			memcpy(iv, &pageno, 8);
+		}
+		
 		to_write = (total_read > orig_file_sz) ? (nread - (total_read - orig_file_sz)) : nread;
 		if (to_write < 0) {
 			pr_warn("Writing negative number of bytes\n");
@@ -359,7 +359,7 @@ static int do_encrypt_file(struct file * infilp, struct file * outfilp, struct c
 	struct scatterlist sg;
 	int blksz;
 	ssize_t nread, nwrite, to_write;
-	int i, iv_size;
+	int iv_size;
 	char * iv = NULL;
 	struct crypto_skcipher * skcipher = NULL;
 	uint64_t pageno=0;
@@ -379,7 +379,7 @@ static int do_encrypt_file(struct file * infilp, struct file * outfilp, struct c
 	bufsz = ROUND_UP_DIV(PAGE_SIZE, blksz) * blksz;
 	dbg_printk("blksz = %d, bufsz = %d\n", blksz, bufsz);
 
-	buf = kmalloc(bufsz, GFP_KERNEL);
+	buf = kzalloc(bufsz, GFP_KERNEL);
 	if (!buf) {
 		ret =  -ENOMEM;
 		goto out;
@@ -413,27 +413,27 @@ static int do_encrypt_file(struct file * infilp, struct file * outfilp, struct c
 	
 	while ((nread = kernel_read(infilp, buf, bufsz, &infilp->f_pos)) > 0) {
 		to_write = ROUND_UP_DIV(nread, blksz) * blksz;
-		for (i=0; i < ROUND_UP_DIV(nread, blksz) ; i++) {
-			sg_init_one(&sg, buf + i * blksz, blksz);
-			skcipher_request_set_crypt(req, &sg, &sg, blksz, iv);
-			ret = crypto_skcipher_encrypt(req);
-			if (ret) {
-				dbg_printk("encryption function returned %d, when encrypting blk %d\n", ret, i);
-				goto out;
-			}
-			// update iv
-			if (iv) {
-				pageno++;
-				memcpy(iv, &pageno, 8);
-			}
+		
+		sg_init_one(&sg, buf, to_write);
+		skcipher_request_set_crypt(req, &sg, &sg, to_write, iv);
+		ret = crypto_skcipher_encrypt(req);
+		if (ret) {
+			dbg_printk("encryption function returned %d\n", ret);
+			goto out;
 		}
-
+		// update iv
+		if (iv) {
+			pageno++;
+			memcpy(iv, &pageno, 8);
+		}
+		
 		nwrite = kernel_write(outfilp, buf, to_write, &outfilp->f_pos);
 		if (nwrite != to_write) {
 			dbg_printk("error in writing file, errcode = %ld\n", nwrite);
 			ret = nwrite < 0 ? nwrite : -EFAULT;
 			goto out;
 		}
+		memset(buf, 0, bufsz);
 	}
 
 	if (nread < 0) {

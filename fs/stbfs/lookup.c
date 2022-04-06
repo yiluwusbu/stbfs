@@ -352,7 +352,6 @@ __must_check struct dentry * stbfs_get_trashbin_dentry(struct super_block * sb)
 	qname.hash = full_name_hash(sb->s_root, qname.name, qname.len);
 	trashbin = d_lookup(sb->s_root, &qname);
 	if (trashbin) {
-		dbg_printk("trashbin lookup has a dcache hit\n");
 		return trashbin;
 	}
 	trashbin = d_alloc(sb->s_root, &qname);
